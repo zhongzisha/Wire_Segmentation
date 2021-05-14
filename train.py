@@ -28,7 +28,7 @@ def get_dataloader(args):
         patches_imgs_val, patches_masks_val = get_data(data_root=args.data_root, subset='val')
 
         train_set = TrainDataset(patches_imgs_train, patches_masks_train, mode="train")
-        val_set = TrainDataset(patches_imgs_val, patches_imgs_val, mode="val")
+        val_set = TrainDataset(patches_imgs_val, patches_masks_val, mode="val")
 
         # Save some samples of feeding to the neural network
         N_sample = min(patches_imgs_train.shape[0], 50)

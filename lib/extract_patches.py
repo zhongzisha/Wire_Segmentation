@@ -34,7 +34,7 @@ def load_data(data_root, subset):
     # img_list, gt_list = load_file_path_txt(data_path_list_file)
     with open('%s/%s.txt' % (data_root, subset)) as fp:
         prefixes = [line.strip() for line in fp.readlines()]
-    inds = np.random.choice(np.arange(len(prefixes)), size=min(100, len(prefixes)), replace=False)
+    inds = np.random.choice(np.arange(len(prefixes)), size=min(10000, len(prefixes)), replace=False)
     imgs = []
     groundTruth = []
     for ind in inds:
