@@ -1,4 +1,4 @@
-RUN_TRAIN=$1   # 0 or 1
+RUN_TYPE=$1   # train, val, test_big
 GPU_ID=$2      # 0 or 1
 NETWORK=$3     # U_Net or LadderNet
 BS=$4          # 4, 8, ...
@@ -17,7 +17,7 @@ echo ${LINE_REFINE_SEG_TMP_DIR}
 echo ${LINE_REFINE_SEG_DATA_ROOT}
 echo "ok"
 
-if [ $RUN_TRAIN == "1" ]; then
+if [ $RUN_TYPE == "train" ]; then
 
   echo "training ..."
   CUDA_VISIBLE_DEVICES=$GPU_ID python train.py \
@@ -30,9 +30,9 @@ if [ $RUN_TRAIN == "1" ]; then
   --save ${SAVE_DIR} \
   --dataset_type ${DATASET_TYPE}
 
-else
+elif [ $RUN_TYPE == "val" ]; then
 
-  echo "testing ..."
+  echo "validating ..."
   CUDA_VISIBLE_DEVICES=$GPU_ID python test.py \
   --outf ${LINE_REFINE_SEG_TMP_DIR} \
   --data_root ${LINE_REFINE_SEG_DATA_ROOT} \
@@ -41,4 +41,13 @@ else
   --network $NETWORK \
   --save ${SAVE_DIR}
 
+elif [ $RUN_TYPE == "test_big" ] && [ $HOSTNAME == "master" ]; then
+
+  echo "testing in big images ..."
+  python detect_gd_line.py \
+  --network ${NETWORK} \
+  --source /media/ubuntu/Data/val_list.txt \
+  --checkpoint ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/best_model.pth \
+  --save-dir ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/big_results/ \
+  --img-size 512 --gap 16 --batchsize 4 --device $GPU_ID
 fi

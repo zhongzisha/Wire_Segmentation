@@ -1,6 +1,6 @@
 from argparse import ArgumentParser
 
-import glob,sys,os
+import glob, sys, os
 import random
 import numpy as np
 import torch
@@ -11,8 +11,12 @@ import cv2
 from osgeo import gdal, osr
 from natsort import natsorted
 import psutil
-from myutils import compute_offsets, LoadImages
 
+try:
+    from myutils import compute_offsets, LoadImages
+except ImportError:
+    print('this script need the gd library, contact zzs.')
+    sys.exit(-1)
 
 """
 export PYTHONPATH=/media/ubuntu/Documents/gd/:$PYTHONPATH
@@ -114,8 +118,8 @@ def main():
     nc = len(names)
     inst_count = 1
 
-    mean = np.array([123.675, 116.28, 103.53], dtype=np.float32).reshape([1,3,1,1])
-    std = np.array([58.395, 57.12, 57.375], dtype=np.float32).reshape([1,3,1,1])
+    mean = np.array([123.675, 116.28, 103.53], dtype=np.float32).reshape([1, 3, 1, 1])
+    std = np.array([58.395, 57.12, 57.375], dtype=np.float32).reshape([1, 3, 1, 1])
 
     for ti in range(len(tiffiles)):
         image_id = ti + 1
@@ -152,7 +156,7 @@ def main():
 
         # 先计算可用内存，如果可以放得下，就不用分块了
         avaialble_mem_bytes = psutil.virtual_memory().available
-        if False: #orig_width * orig_height * ds.RasterCount < 0.8 * avaialble_mem_bytes:
+        if False:  # orig_width * orig_height * ds.RasterCount < 0.8 * avaialble_mem_bytes:
             offsets = [[0, 0, orig_width, orig_height]]
         else:
             # 根据big_subsize计算子块的起始偏移
@@ -205,7 +209,7 @@ def main():
                     #                      'keep_ratio': [[True]]
                     #                      } for _ in range(img.shape[0])]]
                     #       }
-                    inputs = torch.from_numpy(imgs.astype(np.float32)/255).to(device)
+                    inputs = torch.from_numpy(imgs.astype(np.float32) / 255).to(device)
                     # forward the model
                     with torch.no_grad():
                         outputs = model(inputs)
@@ -215,8 +219,8 @@ def main():
                         if np.any(result):
                             x += xoffset
                             y += yoffset
-                            y2 = min(orig_height-1, y+result.shape[0])
-                            x2 = min(orig_width-1, x+result.shape[1])
+                            y2 = min(orig_height - 1, y + result.shape[0])
+                            x2 = min(orig_width - 1, x + result.shape[1])
                             w = int(x2 - x)
                             h = int(y2 - y)
                             final_mask[y:y2, x:x2] = result[:h, :w] * 255
