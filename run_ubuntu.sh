@@ -46,7 +46,7 @@ elif [ $RUN_TYPE == "test_big" ] && [ $HOSTNAME == "master" ]; then
   echo "testing in big images ..."
   python detect_gd_line.py \
   --network ${NETWORK} \
-  --source /media/ubuntu/Data/val_list.txt \
+  --source /media/ubuntu/Data/train_list.txt \
   --checkpoint ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/best_model.pth \
   --save-dir ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/big_results/ \
   --img-size 512 --gap 16 --batchsize 4 --device $GPU_ID
