@@ -59,7 +59,7 @@ def line_detection(src, is_draw=True):
             l = linesP[i][0]
             cv2.line(cdstP, (l[0], l[1]), (l[2], l[3]), (255, 255, 255), 3, cv2.LINE_AA)
 
-    return cdstP, lines
+    return src, lines
 
 
 def main():
@@ -150,7 +150,7 @@ def main():
     mean = np.array([123.675, 116.28, 103.53], dtype=np.float32).reshape([1, 3, 1, 1])
     std = np.array([58.395, 57.12, 57.375], dtype=np.float32).reshape([1, 3, 1, 1])
 
-    for ti in range(3,  4): #len(tiffiles)):
+    for ti in range(len(tiffiles)):
         tiffile = tiffiles[ti]
         file_prefix = tiffile.split(os.sep)[-1].replace('.tif', '')
 
