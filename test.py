@@ -58,11 +58,13 @@ class Test():
     # Evaluate ate and visualize the predicted images
     def evaluate(self):
         print('evaluating 1...')
-        # self.pred_imgs = recompone_overlap(
-        #     self.pred_patches, self.new_height, self.new_width, self.args.stride_height, self.args.stride_width)
-        # ## restore to original dimensions
-        # self.pred_imgs = self.pred_imgs[:, :, 0:self.img_height, 0:self.img_width]
-        self.pred_imgs = self.pred_patches
+        if self.args.subset == 'test2':
+            self.pred_imgs = recompone_overlap(
+                self.pred_patches, self.new_height, self.new_width, self.args.stride_height, self.args.stride_width)
+            ## restore to original dimensions
+            self.pred_imgs = self.pred_imgs[:, :, 0:self.img_height, 0:self.img_width]
+        else:
+            self.pred_imgs = self.pred_patches
         # predictions only inside the FOV
         y_scores = self.pred_patches
         y_true = self.test_masks
@@ -81,7 +83,7 @@ class Test():
             img_name_list = [line.strip() for line in fp.readlines()]
 
         # kill_border(self.pred_imgs, self.test_FOVs) # only for visualization
-        self.save_img_path = join(self.path_experiment, 'result_img')
+        self.save_img_path = join(self.path_experiment, 'result_img_%s' % self.args.subset)
         if not os.path.exists(join(self.save_img_path)):
             os.makedirs(self.save_img_path)
         # self.test_imgs = my_PreProc(self.test_imgs) # Uncomment to save the pre processed image

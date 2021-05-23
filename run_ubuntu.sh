@@ -3,12 +3,13 @@ GPU_ID=$2      # 0 or 1
 NETWORK=$3     # U_Net or LadderNet
 BS=$4          # 4, 8, ...
 LR=$5          # 0.001 or ...
+MODELTYPE=$6   # best or latest
 
 SAVE_DIR=gd_line_seg_${NETWORK}_bs=${BS}_lr=${LR}
 
 if [ ${HOSTNAME} == 'master' ]; then
 LINE_REFINE_SEG_TMP_DIR=/media/ubuntu/Temp/VesselSeg-Pytorch/gd/
-LINE_REFINE_SEG_DATA_ROOT=/media/ubuntu/Data/gd_newAug5_Rot0_4classes/refine_line_v1_512_512
+LINE_REFINE_SEG_DATA_ROOT=/media/ubuntu/Data/gd_newAug5_Rot0_4classes_bak/refine_line_v1_512_512
 DATASET_TYPE=GdDataset
 fi
 
@@ -41,14 +42,39 @@ elif [ $RUN_TYPE == "val" ]; then
   --network $NETWORK \
   --save ${SAVE_DIR}
 
+elif [ $RUN_TYPE == "test" ]; then
+
+  echo "testing ..."
+  CUDA_VISIBLE_DEVICES=$GPU_ID python test.py \
+  --outf ${LINE_REFINE_SEG_TMP_DIR} \
+  --data_root ${LINE_REFINE_SEG_DATA_ROOT} \
+  --batch_size 4 \
+  --subset test2 \
+  --network $NETWORK \
+  --save ${SAVE_DIR}
+
 elif [ $RUN_TYPE == "test_big" ] && [ $HOSTNAME == "master" ]; then
 
   echo "testing in big images ..."
   python detect_gd_line.py \
   --network ${NETWORK} \
   --source /media/ubuntu/Data/val_list.txt \
-  --checkpoint ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/best_model.pth \
-  --save-dir ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/big_results/ \
+  --checkpoint ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/${MODELTYPE}_model.pth \
+  --save-dir ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/${MODELTYPE}_big_results_Boxes0/ \
+  --img-size 512 --gap 16 --batchsize 6 --device $GPU_ID
+
+elif [ $RUN_TYPE == "test_big_with_boxes" ] && [ $HOSTNAME == "master" ]; then
+
+  echo "testing in big images ..."
+  python detect_gd_line.py \
+  --network ${NETWORK} \
+  --source /media/ubuntu/Data/val_list.txt \
+  --checkpoint ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/${MODELTYPE}_model.pth \
+  --save-dir ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/${MODELTYPE}_big_results_Boxes1/ \
   --img-size 512 --gap 16 --batchsize 4 --device $GPU_ID \
   --box_prediction_dir /media/ubuntu/Temp/gd/mmdetection/faster_rcnn_r50_fpn_dc5_2x_coco_lr0.001_newAug3_v2/outputs_val_1024_256_epoch_17
+
+elif [ $RUN_TYPE == "test_dataset" ]; then
+  echo "test dataset ..."
+
 fi
