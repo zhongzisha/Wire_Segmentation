@@ -1,11 +1,11 @@
 from argparse import ArgumentParser
 
-import glob, sys, os
+import glob, sys, os, shutil
 import random
 import numpy as np
 import math
 import gc
-
+import time
 import torch
 import torch.backends.cudnn as cudnn
 import models
@@ -16,7 +16,8 @@ from natsort import natsorted
 import psutil
 
 try:
-    from myutils import compute_offsets, LoadImages, load_gt_from_esri_xml
+    from myutils import compute_offsets, LoadImages, load_gt_from_esri_xml, LoadMasks
+    from myutils import save_predictions_to_envi_xml_and_shp as save_predictions_to_envi_xml
 except ImportError:
     print('this script need the gd library, contact zzs.')
     sys.exit(-1)
@@ -31,7 +32,7 @@ python detect_gd_line.py \
 """
 
 
-def line_detection(src, is_draw=True):
+def line_detection_bak(src, is_draw=True):
     # im is a HxW grayscale image
     # lines is [xmin, ymin, xmax, ymax, label] matrix
     lines = []
@@ -60,6 +61,63 @@ def line_detection(src, is_draw=True):
             cv2.line(cdstP, (l[0], l[1]), (l[2], l[3]), (255, 255, 255), 3, cv2.LINE_AA)
 
     return src, lines
+
+
+def line_detection(src, xoffset=0, yoffset=0, is_draw=True):
+    # im is a HxW grayscale image
+    # lines is [xmin, ymin, xmax, ymax, label] matrix
+    lines = []
+
+    # cdst = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+    cdst = np.stack([src, src, src], axis=-1)
+    cdstP = np.copy(cdst)
+    # lines = cv2.HoughLines(src, 1, np.pi / 180, 150, None, 0, 0)
+    # if lines is not None:
+    #     for i in range(0, len(lines)):
+    #         rho = lines[i][0][0]
+    #         theta = lines[i][0][1]
+    #         a = math.cos(theta)
+    #         b = math.sin(theta)
+    #         x0 = a * rho
+    #         y0 = b * rho
+    #         pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * a))
+    #         pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * a))
+    #         cv2.line(cdst, pt1, pt2, (255, 255, 255), 3, cv2.LINE_AA)
+
+    linesP = cv2.HoughLinesP(src, 1, np.pi / 180, 200, None, 50, 10)
+
+    radians = []
+    dists = []
+    if linesP is not None:
+        # for i in range(len(linesP)):
+        #     x1, y1, x2, y2 = linesP[i][0]
+        #     r = np.arctan((y1 - y2) / (x2 - x1 + 1e-10))
+        #     dist = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+        #     radians.append(r)
+        #     dists.append(dist)
+        #
+        # print('radians', radians)
+        # print('dists', dists)
+        # radian_hist, radian_bin_edges = np.histogram(radians, bins=np.arange(-np.pi / 2, np.pi / 2, 5 * np.pi / 180))
+        # print('radian_hist', radian_hist)
+        # print('radian_bin_edges', radian_bin_edges)
+        # max_hist = np.argmax(radian_hist)
+        # max_radian = radian_bin_edges[max_hist]
+        # print('max_hist', max_hist)
+        # print('max_radian', max_radian)
+
+        for i in range(0, len(linesP)):
+            x1, y1, x2, y2 = linesP[i][0]
+
+            dis = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+            if dis < 100:
+                continue
+
+            cv2.line(cdstP, (x1, y1), (x2, y2), (255, 255, 255), 3, cv2.LINE_AA)
+            lines.append([x1 + xoffset, y1 + yoffset,
+                          x2 + xoffset, y2 + yoffset])
+
+    return cdstP, lines
 
 
 def main():
@@ -94,6 +152,7 @@ def main():
     parser.add_argument('--name', default='exp', help='save results to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--box_prediction_dir', type=str, default='', help='boxes prediction directory')
+    parser.add_argument('--is_save_patches', action='store_true', help='if save image patches for debug')
 
     args = parser.parse_args()
 
@@ -105,6 +164,7 @@ def main():
         args.batchsize, args.score_thres, args.hw_thres
     subset = args.subset
     box_prediction_dir = args.box_prediction_dir
+    is_save_patches = args.is_save_patches
 
     # Directories
     save_dir = args.save_dir
@@ -150,16 +210,23 @@ def main():
     mean = np.array([123.675, 116.28, 103.53], dtype=np.float32).reshape([1, 3, 1, 1])
     std = np.array([58.395, 57.12, 57.375], dtype=np.float32).reshape([1, 3, 1, 1])
 
-    for ti in range(len(tiffiles)):
+    for ti in range(5, len(tiffiles)):
         tiffile = tiffiles[ti]
         file_prefix = tiffile.split(os.sep)[-1].replace('.tif', '')
 
         print(ti, '=' * 80)
         print(file_prefix)
 
-        mask_savefilename = save_dir + '/' + subset + "_" + file_prefix + "_LineSeg_result.png"
+        mask_savefilename = os.path.join(save_dir, subset + "_" + file_prefix + "_LineSeg_result.png")
         # if os.path.exists(mask_savefilename):
         #     continue
+
+        if is_save_patches:
+            patches_save_dir = os.path.join(save_dir, file_prefix)
+            print('patches_save_dir', patches_save_dir)
+            if os.path.exists(patches_save_dir):
+                shutil.rmtree(patches_save_dir, ignore_errors=True)
+            os.makedirs(patches_save_dir)
 
         ds = gdal.Open(tiffile, gdal.GA_ReadOnly)
         print("Driver: {}/{}".format(ds.GetDriver().ShortName,
@@ -191,27 +258,74 @@ def main():
             offsets = compute_offsets(height=orig_height, width=orig_width, subsize=big_subsize, gap=2 * gt_gap)
         print('offsets: ', offsets)
 
-        final_mask = np.zeros((orig_height, orig_width), dtype=np.uint8)
+        final_mask = None
+        if not os.path.exists(mask_savefilename):
+            # dir_path = os.path.dirname(os.path.abspath(mask_savefilename))
+            # tmp_filename = os.path.join(dir_path, 'tmp.png')
+            # shutil.move(mask_savefilename, tmp_filename)
+            # final_mask = cv2.imread(tmp_filename, 0)
+            # shutil.move(tmp_filename, mask_savefilename)
 
+            final_mask = np.zeros((orig_height, orig_width), dtype=np.uint8)
+            for oi, (xoffset, yoffset, sub_width, sub_height) in enumerate(offsets):  # left, up
+
+                print('processing sub image %d' % oi, xoffset, yoffset, sub_width, sub_height)
+                dataset = LoadImages(gdal_ds=ds, xoffset=xoffset, yoffset=yoffset,
+                                     width=sub_width, height=sub_height,
+                                     batchsize=batchsize, subsize=imgsz, gap=gap, stride=stride,
+                                     return_list=False, is_nchw=True, return_positions=True)
+                if len(dataset) == 0:
+                    continue
+
+                print('forward inference')
+                for idx, (imgs, poss) in enumerate(dataset):
+                    inputs = torch.from_numpy(imgs.astype(np.float32) / 255).to(device)
+                    # forward the model
+                    with torch.no_grad():
+                        outputs = model(inputs)
+                        results = outputs[:, 1].data.cpu().numpy()
+
+                    for (x, y), result in zip(poss, results):
+                        if np.any(result):
+                            x += xoffset
+                            y += yoffset
+                            y2 = min(orig_height - 1, y + result.shape[0])
+                            x2 = min(orig_width - 1, x + result.shape[1])
+                            w = int(x2 - x)
+                            h = int(y2 - y)
+
+                            result = result[:h, :w] * 255
+                            result = result.astype(np.uint8)
+                            final_mask[y:y2, x:x2] = result * 255
+
+                del dataset.img0
+                del dataset
+                gc.collect()
+            # cv2.imwrite(mask_savefilename, mask)
+            cv2.imencode('.png', final_mask)[1].tofile(mask_savefilename)
+
+        del ds
+
+        time.sleep(3)
+
+        mask_ds = gdal.Open(mask_savefilename, gdal.GA_ReadOnly)
+        # conduct line detection in final_mask
+        imgsz_mask = 5120
+        final_mask2 = np.zeros((orig_height, orig_width), dtype=np.uint8)
+        all_lines = []
         for oi, (xoffset, yoffset, sub_width, sub_height) in enumerate(offsets):  # left, up
 
-            print('processing sub image %d' % oi, xoffset, yoffset, sub_width, sub_height)
-            dataset = LoadImages(gdal_ds=ds, xoffset=xoffset, yoffset=yoffset,
-                                 width=sub_width, height=sub_height,
-                                 batchsize=batchsize, subsize=imgsz, gap=gap, stride=stride,
-                                 return_list=False, is_nchw=True, return_positions=True)
+            print('processing sub mask %d' % oi, xoffset, yoffset, sub_width, sub_height)
+            dataset = LoadMasks(gdal_ds=mask_ds, xoffset=xoffset, yoffset=yoffset,
+                                width=sub_width, height=sub_height,
+                                batchsize=batchsize, subsize=imgsz_mask, gap=gap, stride=stride,
+                                return_list=False, is_nchw=True, return_positions=True)
             if len(dataset) == 0:
                 continue
 
             print('forward inference')
             for idx, (imgs, poss) in enumerate(dataset):
-                inputs = torch.from_numpy(imgs.astype(np.float32) / 255).to(device)
-                # forward the model
-                with torch.no_grad():
-                    outputs = model(inputs)
-                    results = outputs[:, 1].data.cpu().numpy()
-
-                for (x, y), result in zip(poss, results):
+                for (x, y), result in zip(poss, imgs):
                     if np.any(result):
                         x += xoffset
                         y += yoffset
@@ -220,41 +334,93 @@ def main():
                         w = int(x2 - x)
                         h = int(y2 - y)
 
-                        if True:
-                            result = result[:h, :w] * 255
-                            result = result.astype(np.uint8)
-                            result, lines = line_detection(result)    # do line detection
-                            if len(result.shape) == 3:
-                                final_mask[y:y2, x:x2] = result[:, :, 0]
-                            else:
-                                final_mask[y:y2, x:x2] = result
+                        result = result[:h, :w]
+
+                        if is_save_patches:
+                            cv2.imwrite(os.path.join(patches_save_dir, "patch_%05d_%d_%d_before.png" % (idx, x, y)),
+                                        result)
+
+                        result, lines = line_detection(result, x, y)  # do line detection  lines:[x1,y1,x2,y2]
+                        all_lines += lines
+
+                        if is_save_patches:
+                            cv2.imwrite(os.path.join(patches_save_dir, "patch_%05d_%d_%d_after.png" % (idx, x, y)),
+                                        result)
+
+                        if len(result.shape) == 3:
+                            final_mask2[y:y2, x:x2] = result[:, :, 0]
                         else:
-                            final_mask[y:y2, x:x2] = result[:h, :w] * 255
+                            final_mask2[y:y2, x:x2] = result
 
             del dataset.img0
             del dataset
             gc.collect()
 
-        # draw box predictions
-        if box_prediction_dir != '':
+        del mask_ds
+        cv2.imencode('.png', final_mask2)[1].tofile(mask_savefilename.replace('_LineSeg_result', '_LineSeg_result2'))
+        del final_mask2
 
-            box_preds_xml_filename = box_prediction_dir + '/' + file_prefix + '.xml'
-            pred_boxes, pred_labels = load_gt_from_esri_xml(box_preds_xml_filename,
-                                                            gdal_trans_info=geotransform)
-            if len(pred_boxes) > 0:
-                print('num of predicted boxes: ', len(pred_boxes))
-                for j, (box, label) in enumerate(zip(pred_boxes, pred_labels)):  # per item
-                    xmin, ymin, xmax, ymax = box.astype(np.int32)
-                    cv2.rectangle(final_mask, (xmin, ymin), (xmax, ymax), color=(255, 0, 0),
-                                  thickness=3)
-                    cv2.putText(final_mask, str(label), ((xmin+xmax)//2, (ymin+ymax)//2), fontFace=1, fontScale=1,
-                                color=(255, 0, 0), thickness=3)
+        if len(all_lines) > 0:
+            radians = []
+            dists = []
+            valid_lines = []
+            for x1, y1, x2, y2 in all_lines:
+                radian = np.arctan((y1 - y2) / (x2 - x1 + 1e-10))
+                dist = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+                radians.append(radian)
+                dists.append(dist)
 
-        # cv2.imwrite(mask_savefilename, mask)
-        cv2.imencode('.png', final_mask)[1].tofile(mask_savefilename)
+                if dist > 50:
+                    valid_lines.append([x1, y1, x2, y2])
 
-        del final_mask
-        del ds
+            # print('radians', radians)
+            # print('dists', dists)
+            radian_hist, radian_bin_edges = np.histogram(radians,
+                                                         bins=np.arange(-np.pi / 2, np.pi / 2, 5 * np.pi / 180))
+            print('radian_hist', radian_hist)
+            print('radian_bin_edges', radian_bin_edges)
+            max_hist = np.argmax(radian_hist)
+            max_radian = radian_bin_edges[max_hist]
+            print('max_hist', max_hist)
+            print('max_radian', max_radian)
+
+            if len(valid_lines) > 0:
+                all_preds = np.concatenate([np.array(valid_lines).reshape([-1, 4]),
+                                            np.ones((len(valid_lines), 2), dtype=np.float32)], axis=1)
+
+                save_predictions_to_envi_xml(preds=all_preds,
+                                             save_xml_filename=os.path.join(save_dir, file_prefix + '.xml'),
+                                             gdal_proj_info=projection_esri,
+                                             gdal_trans_info=geotransform,
+                                             names={1: "Line"},
+                                             colors={1: [255, 0, 0]},
+                                             is_line=True,
+                                             spatialreference=projection_sr,
+                                             is_save_xml=False)
+
+        if final_mask is not None:
+            # draw box predictions
+            if box_prediction_dir != '':
+
+                box_preds_xml_filename = os.path.join(box_prediction_dir, file_prefix + '.xml')
+                pred_boxes, pred_labels, pred_scores = load_gt_from_esri_xml(box_preds_xml_filename,
+                                                                             gdal_trans_info=geotransform,
+                                                                             has_scores=True)
+                print(len(pred_boxes), len(pred_labels), len(pred_scores))
+                if len(pred_boxes) > 0:
+                    print('num of predicted boxes: ', len(pred_boxes))
+                    for j, (box, label) in enumerate(zip(pred_boxes, pred_labels)):  # per item
+                        xmin, ymin, xmax, ymax = box.astype(np.int32)
+                        cv2.rectangle(final_mask, (xmin, ymin), (xmax, ymax), color=(255, 0, 0),
+                                      thickness=3)
+                        cv2.putText(final_mask, str(label), ((xmin + xmax) // 2, (ymin + ymax) // 2), fontFace=1,
+                                    fontScale=1,
+                                    color=(255, 0, 0), thickness=3)
+
+            # cv2.imwrite(mask_savefilename, mask)
+            cv2.imencode('.png', final_mask)[1].tofile(
+                mask_savefilename.replace('_LineSeg_result', '_LineSeg_result_withBoxes'))
+            del final_mask
 
 
 if __name__ == '__main__':

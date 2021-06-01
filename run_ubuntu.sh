@@ -65,14 +65,21 @@ elif [ $RUN_TYPE == "test_big" ] && [ $HOSTNAME == "master" ]; then
 
 elif [ $RUN_TYPE == "test_big_with_boxes" ] && [ $HOSTNAME == "master" ]; then
 
+  if [ ${NETWORK} == "U_Net" ]; then
+    TEST_BS=12
+  elif [ ${NETWORK} == "Dense_Unet" ]; then
+    TEST_BS=4
+  fi
+
   echo "testing in big images ..."
   python detect_gd_line.py \
   --network ${NETWORK} \
   --source /media/ubuntu/Data/val_list.txt \
   --checkpoint ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/${MODELTYPE}_model.pth \
   --save-dir ${LINE_REFINE_SEG_TMP_DIR}/${SAVE_DIR}/${MODELTYPE}_big_results_Boxes1/ \
-  --img-size 512 --gap 16 --batchsize 4 --device $GPU_ID \
-  --box_prediction_dir /media/ubuntu/Temp/gd/mmdetection/faster_rcnn_r50_fpn_dc5_2x_coco_lr0.001_newAug3_v2/outputs_val_1024_256_epoch_17
+  --img-size 512 --gap 8 --batchsize ${TEST_BS} --device $GPU_ID \
+  --box_prediction_dir /media/ubuntu/Temp/gd/mmdetection/faster_rcnn_r50_fpn_dc5_2x_coco_lr0.001_newAug3_v2/outputs_val_1024_256_epoch_17 \
+  --is_save_patches
 
 elif [ $RUN_TYPE == "test_dataset" ]; then
   echo "test dataset ..."
