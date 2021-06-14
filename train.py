@@ -21,14 +21,14 @@ from test import Test
 #  Load the data and extract patches
 def get_dataloader(args):
     if args.dataset_type == 'GdDataset':
-        train_set = GdDataset(data_root=args.data_root, subset='train')
-        val_set = GdDataset(data_root=args.data_root, subset='val')
+        train_set = GdDataset(data_root=args.data_root, subset=args.train_subset)
+        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset)
     else:
-        patches_imgs_train, patches_masks_train = get_data(data_root=args.data_root, subset='train')
-        patches_imgs_val, patches_masks_val = get_data(data_root=args.data_root, subset='val')
+        patches_imgs_train, patches_masks_train = get_data(data_root=args.data_root, subset=args.train_subset)
+        patches_imgs_val, patches_masks_val = get_data(data_root=args.data_root, subset=args.val_subset)
 
-        train_set = TrainDataset(patches_imgs_train, patches_masks_train, mode="train")
-        val_set = TrainDataset(patches_imgs_val, patches_masks_val, mode="val")
+        train_set = TrainDataset(patches_imgs_train, patches_masks_train, mode=args.train_subset)
+        val_set = TrainDataset(patches_imgs_val, patches_masks_val, mode=args.val_subset)
 
         # Save some samples of feeding to the neural network
         N_sample = min(patches_imgs_train.shape[0], 50)

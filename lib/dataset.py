@@ -49,7 +49,7 @@ class GdDataset(Dataset):
         self.data_root = data_root
         self.subset = subset
         self.transforms = None
-        if subset == "train":
+        if "train" in subset:
             self.transforms = Compose([
                 # RandomResize([56,72],[56,72]),
                 # RandomCrop((48, 48)),

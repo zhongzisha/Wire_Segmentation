@@ -5,11 +5,11 @@ BS=$4          # 4, 8, ...
 LR=$5          # 0.001 or ...
 MODELTYPE=$6   # best or latest
 
-SAVE_DIR=gd_line_seg_${NETWORK}_bs=${BS}_lr=${LR}
+SAVE_DIR=gd_line_seg_${NETWORK}_bs=${BS}_lr=${LR}_withSat
 
 if [ ${HOSTNAME} == 'master' ]; then
 LINE_REFINE_SEG_TMP_DIR=/media/ubuntu/Temp/VesselSeg-Pytorch/gd/
-LINE_REFINE_SEG_DATA_ROOT=/media/ubuntu/Data/gd_newAug5_Rot0_4classes_bak/refine_line_v1_512_512
+LINE_REFINE_SEG_DATA_ROOT=/media/ubuntu/Temp/gd_newAug5_Rot0_4classes/refine_line_v1_512_512
 DATASET_TYPE=GdDataset
 fi
 
@@ -29,7 +29,9 @@ if [ $RUN_TYPE == "train" ]; then
   --N_patches 0 \
   --network ${NETWORK} \
   --save ${SAVE_DIR} \
-  --dataset_type ${DATASET_TYPE}
+  --dataset_type ${DATASET_TYPE} \
+  --train_subset train1 \
+  --val_subset val1
 
 elif [ $RUN_TYPE == "val" ]; then
 
