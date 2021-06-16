@@ -31,7 +31,8 @@ if [ $RUN_TYPE == "train" ]; then
   --save ${SAVE_DIR} \
   --dataset_type ${DATASET_TYPE} \
   --train_subset train1 \
-  --val_subset val1
+  --val_subset val1 \
+  --test_subset val1
 
 elif [ $RUN_TYPE == "val" ]; then
 
@@ -42,7 +43,10 @@ elif [ $RUN_TYPE == "val" ]; then
   --batch_size $BS \
   --subset val \
   --network $NETWORK \
-  --save ${SAVE_DIR}
+  --save ${SAVE_DIR} \
+  --train_subset train1 \
+  --val_subset val1 \
+  --test_subset val1
 
 elif [ $RUN_TYPE == "test" ]; then
 

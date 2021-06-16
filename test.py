@@ -30,7 +30,7 @@ class Test():
 
         self.patches_imgs_test, self.test_imgs, self.test_masks, self.new_height, self.new_width = get_data_test_overlap(
             data_root=args.data_root,
-            subset=args.subset,
+            subset=args.test_subset,
             patch_height=args.test_patch_height,
             patch_width=args.test_patch_width,
             stride_height=args.stride_height,
@@ -58,7 +58,7 @@ class Test():
     # Evaluate ate and visualize the predicted images
     def evaluate(self):
         print('evaluating 1...')
-        if self.args.subset == 'test2':
+        if self.args.test_subset == 'test2':
             self.pred_imgs = recompone_overlap(
                 self.pred_patches, self.new_height, self.new_width, self.args.stride_height, self.args.stride_width)
             ## restore to original dimensions
@@ -79,11 +79,11 @@ class Test():
 
     # save segmentation imgs
     def save_segmentation_result(self):
-        with open('%s/%s.txt' % (self.args.data_root, self.args.subset)) as fp:
+        with open('%s/%s.txt' % (self.args.data_root, self.args.test_subset)) as fp:
             img_name_list = [line.strip() for line in fp.readlines()]
 
         # kill_border(self.pred_imgs, self.test_FOVs) # only for visualization
-        self.save_img_path = join(self.path_experiment, 'result_img_%s' % self.args.subset)
+        self.save_img_path = join(self.path_experiment, 'result_img_%s' % self.args.test_subset)
         if not os.path.exists(join(self.save_img_path)):
             os.makedirs(self.save_img_path)
         # self.test_imgs = my_PreProc(self.test_imgs) # Uncomment to save the pre processed image
@@ -114,7 +114,7 @@ class Test():
 if __name__ == '__main__':
     args = parse_args()
     save_path = join(args.outf, args.save)
-    sys.stdout = Print_Logger(os.path.join(save_path, 'test_log.txt'))
+    sys.stdout = Print_Logger(os.path.join(save_path, 'test_%s_log.txt'%args.test_subset))
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     if args.network == 'U_Net':

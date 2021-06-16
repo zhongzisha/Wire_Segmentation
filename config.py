@@ -14,6 +14,7 @@ def parse_args():
     parser.add_argument('--dataset_type', default='', type=str)
     parser.add_argument('--train_subset', default='train', type=str)
     parser.add_argument('--val_subset', default='val', type=str)
+    parser.add_argument('--test_subset', default='val', type=str)
     parser.add_argument('--subset', default='', type=str)
     parser.add_argument('--network', default='', type=str)
     parser.add_argument('--train_patch_height', default=512, type=int)
