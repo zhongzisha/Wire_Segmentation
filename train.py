@@ -16,13 +16,16 @@ from collections import OrderedDict
 from lib.metrics import Evaluate
 import models
 from test import Test
+from swin_unet_config import get_config
 
 
 #  Load the data and extract patches
 def get_dataloader(args):
     if args.dataset_type == 'GdDataset':
-        train_set = GdDataset(data_root=args.data_root, subset=args.train_subset)
-        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset)
+        crop_shape = (224, 224) if args.network == 'Swin_Unet' else None
+        print('crop_shape: ', crop_shape)
+        train_set = GdDataset(data_root=args.data_root, subset=args.train_subset, crop_shape=crop_shape)
+        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=crop_shape)
     else:
         patches_imgs_train, patches_masks_train = get_data(data_root=args.data_root, subset=args.train_subset)
         patches_imgs_val, patches_masks_val = get_data(data_root=args.data_root, subset=args.val_subset)
@@ -109,13 +112,24 @@ def main():
         net = models.UNetFamily.R2U_Net(img_ch=3, output_ch=2).to(device)
     elif args.network == 'LadderNet':
         net = models.LadderNet(inplanes=3, num_classes=2, layers=3, filters=16).to(device)
+    elif args.network == 'Swin_Unet':
+        net_config = get_config(args)
+        net = models.Swin_Unet(config=net_config,
+                               img_size=args.img_size,
+                               num_classes=args.num_classes).to(device)
+        net.load_from(net_config)
     else:
         print('wrong network type. exit.')
         sys.exit(-1)
     print("Total number of parameters: " + str(count_parameters(net)))
 
-    log.save_graph(net, torch.randn((1, 3, 512, 512)).to(device).to(
-        device=device))  # Save the model structure to the tensorboard file
+    if args.network == 'Swin_Unet':
+        log.save_graph(net, torch.randn((1, 3, 224, 224)).to(device).to(
+            device=device))  # Save the model structure to the tensorboard file
+    else:
+        log.save_graph(net, torch.randn((1, 3, 512, 512)).to(device).to(
+            device=device))  # Save the model structure to the tensorboard file
+
     # torch.nn.init.kaiming_normal(net, mode='fan_out')      # Modify default initialization method
     # net.apply(weight_init)
 
@@ -131,6 +145,7 @@ def main():
     optimizer = optim.Adam(net.parameters(), lr=args.lr)
     lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.N_epochs, eta_min=0)
 
+    print(args)
     train_loader, val_loader = get_dataloader(args)  # create dataloader
 
     if args.val_on_test:

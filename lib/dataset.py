@@ -45,11 +45,20 @@ class TrainDataset(Dataset):
 
 
 class GdDataset(Dataset):
-    def __init__(self, data_root, subset="train"):
+    def __init__(self, data_root, subset="train", crop_shape=None):
         self.data_root = data_root
         self.subset = subset
         self.transforms = None
-        if "train" in subset:
+        if crop_shape is not None:
+            self.transforms = Compose([
+                # RandomResize([56,72],[56,72]),
+                # RandomCrop((48, 48)),
+                RandomFlip_LR(prob=0.5),
+                RandomFlip_UD(prob=0.5),
+                RandomRotate(),
+                RandomCrop(shape=crop_shape)
+            ])
+        else:
             self.transforms = Compose([
                 # RandomResize([56,72],[56,72]),
                 # RandomCrop((48, 48)),
