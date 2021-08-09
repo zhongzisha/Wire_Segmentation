@@ -15,8 +15,8 @@ from lib.logger import Logger, Print_Logger
 from collections import OrderedDict
 from lib.metrics import Evaluate
 import models
-from test import Test
 from swin_unet_config import get_config
+from torch.nn.modules.loss import CrossEntropyLoss
 
 
 #  Load the data and extract patches
@@ -66,7 +66,7 @@ def train(train_loader, net, criterion, optimizer, device):
 
 
 # val 
-def val(val_loader, net, criterion, device):
+def val_bak(val_loader, net, criterion, device):
     net.eval()
     val_loss = AverageMeter()
     evaluater = Evaluate()
@@ -87,6 +87,69 @@ def val(val_loader, net, criterion, device):
     return log
 
 
+def val(val_loader, net, criterion, device, patch_size=None):
+    num_classes = 2
+    net.eval()
+    val_loss = AverageMeter()
+    evaluater = Evaluate()
+
+    if patch_size is not None:  # sliding window inference, from mmsegmentation
+        with torch.no_grad():
+            for batch_idx, (image, label) in tqdm(enumerate(val_loader), total=len(val_loader)):
+                image = image.to(device)
+                h_stride, w_stride = patch_size // 2, patch_size // 2
+                h_crop, w_crop = patch_size, patch_size
+                batch_size, _, h_img, w_img = image.size()
+                h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
+                w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
+                preds = image.new_zeros((batch_size, num_classes, h_img, w_img))
+                count_mat = image.new_zeros((batch_size, 1, h_img, w_img))
+                for h_idx in range(h_grids):
+                    for w_idx in range(w_grids):
+                        y1 = h_idx * h_stride
+                        x1 = w_idx * w_stride
+                        y2 = min(y1 + h_crop, h_img)
+                        x2 = min(x1 + w_crop, w_img)
+                        y1 = max(y2 - h_crop, 0)
+                        x1 = max(x2 - w_crop, 0)
+                        crop_img = image[:, :, y1:y2, x1:x2]
+                        crop_seg_logit = net(crop_img)
+                        preds += F.pad(crop_seg_logit,
+                                       (int(x1), int(preds.shape[3] - x2), int(y1),
+                                        int(preds.shape[2] - y2)))
+
+                        count_mat[:, :, y1:y2, x1:x2] += 1
+                assert (count_mat == 0).sum() == 0
+                if torch.onnx.is_in_onnx_export():
+                    # cast count_mat to constant while exporting to ONNX
+                    count_mat = torch.from_numpy(
+                        count_mat.cpu().detach().numpy()).to(device=image.device)
+                preds = preds / count_mat
+                preds = torch.softmax(preds, dim=1)
+                outputs = preds.cpu().detach().numpy()
+                evaluater.add_batch(label.numpy(), outputs[:, 1])
+    else:
+        with torch.no_grad():
+            for batch_idx, (inputs, targets) in tqdm(enumerate(val_loader), total=len(val_loader)):
+                inputs, targets = inputs.to(device), targets.to(device)
+                outputs = net(inputs)
+                loss = criterion(outputs, targets)
+                val_loss.update(loss.item(), inputs.size(0))
+
+                outputs = outputs.data.cpu().numpy()
+                targets = targets.data.cpu().numpy()
+                evaluater.add_batch(targets, outputs[:, 1])
+
+    meanDice, meanHD95 = evaluater.mean_dice_and_hd95()
+    log = OrderedDict([('val_loss', val_loss.avg),
+                       ('val_acc', evaluater.confusion_matrix()[1]),
+                       ('val_f1', evaluater.f1_score()),
+                       ('val_auc_roc', evaluater.auc_roc()),
+                       ('val_mean_dice', meanDice),
+                       ('val_mean_hd95', meanHD95)])
+    return log
+
+
 def main():
     setpu_seed(2021)
     args = parse_args()
@@ -100,19 +163,20 @@ def main():
     sys.stdout = Print_Logger(os.path.join(save_path, 'train_log.txt'))
     print('The computing device used is: ', 'GPU' if device.type == 'cuda' else 'CPU')
 
-    if args.network == 'U_Net':
+    network_name = args.network
+    if network_name == 'U_Net':
         net = models.UNetFamily.U_Net(img_ch=3, output_ch=2).to(device)
-    elif args.network == 'Dense_Unet':
+    elif network_name == 'Dense_Unet':
         net = models.UNetFamily.Dense_Unet(in_chan=3, out_chan=2).to(device)
-    elif args.network == 'R2AttU_Net':
+    elif network_name == 'R2AttU_Net':
         net = models.UNetFamily.R2AttU_Net(img_ch=3, output_ch=2).to(device)
-    elif args.network == 'AttU_Net':
+    elif network_name == 'AttU_Net':
         net = models.UNetFamily.AttU_Net(img_ch=3, output_ch=2).to(device)
-    elif args.network == 'R2U_Net':
+    elif network_name == 'R2U_Net':
         net = models.UNetFamily.R2U_Net(img_ch=3, output_ch=2).to(device)
-    elif args.network == 'LadderNet':
+    elif network_name == 'LadderNet':
         net = models.LadderNet(inplanes=3, num_classes=2, layers=3, filters=16).to(device)
-    elif args.network == 'Swin_Unet':
+    elif network_name == 'Swin_Unet':
         net_config = get_config(args)
         net = models.Swin_Unet(config=net_config,
                                img_size=args.img_size,
@@ -123,7 +187,7 @@ def main():
         sys.exit(-1)
     print("Total number of parameters: " + str(count_parameters(net)))
 
-    if args.network == 'Swin_Unet':
+    if network_name == 'Swin_Unet':
         # log.save_graph(net, torch.randn((1, 3, 224, 224)).to(device).to(
         #     device=device))  # Save the model structure to the tensorboard file
         pass
@@ -135,7 +199,8 @@ def main():
     # net.apply(weight_init)
 
     # criterion = LossMulti(jaccard_weight=0,class_weights=np.array([0.5,0.5]))
-    criterion = CrossEntropyLoss2d()  # Initialize loss function
+    # criterion = CrossEntropyLoss2d()  # Initialize loss function
+    criterion = CrossEntropyLoss()
 
     # create a list of learning rate with epochs
     # lr_epoch = np.array([50, args.N_epochs])
@@ -143,35 +208,59 @@ def main():
     # lr_schedule = make_lr_schedule(lr_epoch,lr_value)
     # lr_scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.5)
     # optimizer = optim.SGD(net.parameters(),lr=lr_schedule[0], momentum=0.9, weight_decay=5e-4, nesterov=True)
-    if args.network == 'Swin_Unet':
-        optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.0001)
+    base_lr = args.lr
+    if network_name == 'Swin_Unet':
+        optimizer = optim.SGD(net.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
         lr_scheduler = None
     else:
-        optimizer = optim.Adam(net.parameters(), lr=args.lr)
+        optimizer = optim.Adam(net.parameters(), lr=base_lr)
         lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.N_epochs, eta_min=0)
 
     print(args)
     train_loader, val_loader = get_dataloader(args)  # create dataloader
 
-    if args.val_on_test:
-        print('\033[0;32m===============Validation on Testset!!!===============\033[0m')
-        val_tool = Test(args)
-
     best = {'epoch': 0, 'AUC_roc': 0.5}  # Initialize the best epoch and performance(AUC of ROC)
     trigger = 0  # Early stop Counter
 
+    iter_num = 0
+    max_iterations = args.N_epochs * len(train_loader)
     for epoch in range(args.start_epoch, args.N_epochs + 1):
         print('\nEPOCH: %d/%d --(learn_rate:%.6f) | Time: %s' % \
               (epoch, args.N_epochs, optimizer.state_dict()['param_groups'][0]['lr'], time.asctime()))
 
         # train stage
-        train_log = train(train_loader, net, criterion, optimizer, device)
+        # train_log = train(train_loader, net, criterion, optimizer, device)
+        net.train()
+        train_loss = AverageMeter()
+        for batch_idx, (inputs, targets) in tqdm(enumerate(train_loader), total=len(train_loader)):
+            # print(batch_idx, inputs.shape, targets.shape)
+            # print(type(inputs), inputs.min(), inputs.max())
+            # print(type(targets), targets.min(), targets.max())
+            inputs, targets = inputs.to(device), targets.to(device)
+            optimizer.zero_grad()
+
+            outputs = net(inputs)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+
+            if lr_scheduler is None:  # for Swin_Unet
+                lr_ = base_lr * (1.0 - iter_num / max_iterations) ** 0.9
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = lr_
+            iter_num = iter_num + 1
+
+            train_loss.update(loss.item(), inputs.size(0))
+        train_log = OrderedDict([('train_loss', train_loss.avg)])
+        print('train_log', train_log)
+
         # val stage
-        if not args.val_on_test:
-            val_log = val(val_loader, net, criterion, device)
+        if network_name == 'Swin_Unet':
+            val_log = val(val_loader, net, criterion, device, patch_size=args.img_size)
         else:
-            val_tool.inference(net)
-            val_log = val_tool.val()
+            val_log = val(val_loader, net, criterion, device)
+
+        print('val_log', val_log)
 
         log.update(epoch, train_log, val_log)  # Add log information
 

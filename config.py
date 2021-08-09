@@ -63,7 +63,7 @@ def parse_args():
                         default=224, help='input patch size of network input')
     parser.add_argument('--num_classes', type=int,
                         default=2, help='output channel of network')
-    parser.add_argument('--cfg', type=str, required=True, metavar="FILE", help='path to config file', )
+    parser.add_argument('--cfg', type=str, metavar="FILE", help='path to config file', )
     parser.add_argument(
         "--opts",
         help="Modify config options by adding 'KEY VALUE' pairs. ",

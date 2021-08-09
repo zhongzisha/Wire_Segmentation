@@ -13,6 +13,7 @@ import numpy as np
 from collections import OrderedDict
 import matplotlib.pylab as pylab
 import matplotlib.pyplot as plt
+from medpy import metric
 
 params = {'legend.fontsize': 13,
           'axes.labelsize': 15,
@@ -22,12 +23,25 @@ params = {'legend.fontsize': 13,
 pylab.rcParams.update(params)
 
 
-# Area under the ROC curve
+def calculate_metric_percase(pred, gt):
+    pred[pred > 0] = 1
+    gt[gt > 0] = 1
+    if pred.sum() > 0 and gt.sum() > 0:
+        dice = metric.binary.dc(pred, gt)
+        hd95 = metric.binary.hd95(pred, gt)
+        return dice, hd95
+    elif pred.sum() > 0 and gt.sum() == 0:
+        return 1, 0
+    else:
+        return 0, 0
+
 
 class Evaluate():
     def __init__(self, save_path=None):
         self.target = None
         self.output = None
+        self.target_unflatten = None
+        self.output_unflatten = None
         self.save_path = save_path
         if self.save_path is not None:
             if not os.path.exists(self.save_path):
@@ -36,11 +50,24 @@ class Evaluate():
 
     # Add data pair (target and predicted value)
     def add_batch(self, batch_tar, batch_out):
+        # print(batch_tar.shape)    # BHW
+        # print(batch_out.shape)    # BHW
+
+        self.target_unflatten = batch_tar
+        self.output_unflatten = batch_out
+
         batch_tar = batch_tar.flatten()
         batch_out = batch_out.flatten()
 
         self.target = batch_tar if self.target is None else np.concatenate((self.target, batch_tar))
         self.output = batch_out if self.output is None else np.concatenate((self.output, batch_out))
+
+    def mean_dice_and_hd95(self):
+        results = []
+        for (gt, pred) in zip(self.target_unflatten, self.output_unflatten):
+            results.append(calculate_metric_percase(pred, gt))
+        results = np.array(results)
+        return np.mean(results, axis=0)
 
     # Plot ROC and calculate AUC of ROC
     def auc_roc(self, plot=False):

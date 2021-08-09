@@ -95,7 +95,7 @@ class Test():
     def val(self):
         self.pred_imgs = recompone_overlap(
             self.pred_patches, self.new_height, self.new_width, self.args.stride_height, self.args.stride_width)
-        ## recover to original dimensions
+        # recover to original dimensions
         self.pred_imgs = self.pred_imgs[:, :, 0:self.img_height, 0:self.img_width]
 
         # predictions only inside the FOV
@@ -114,7 +114,7 @@ class Test():
 if __name__ == '__main__':
     args = parse_args()
     save_path = join(args.outf, args.save)
-    sys.stdout = Print_Logger(os.path.join(save_path, 'test_%s_log.txt'%args.test_subset))
+    sys.stdout = Print_Logger(os.path.join(save_path, 'test_%s_log.txt' % args.test_subset))
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
     if args.network == 'U_Net':
