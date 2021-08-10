@@ -528,7 +528,7 @@ class PatchEmbed(nn.Module):
         super().__init__()
         img_size = to_2tuple(img_size)
         patch_size = to_2tuple(patch_size)
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]
+        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1]]  # [224/4=56, 224/4=56]
         self.img_size = img_size
         self.patch_size = patch_size
         self.patches_resolution = patches_resolution
@@ -567,32 +567,48 @@ class SwinTransformerSys(nn.Module):
           https://arxiv.org/pdf/2103.14030
 
     Args:
-        img_size (int | tuple(int)): Input image size. Default 224
-        patch_size (int | tuple(int)): Patch size. Default: 4
-        in_chans (int): Number of input image channels. Default: 3
-        num_classes (int): Number of classes for classification head. Default: 1000
-        embed_dim (int): Patch embedding dimension. Default: 96
-        depths (tuple(int)): Depth of each Swin Transformer layer.
-        num_heads (tuple(int)): Number of attention heads in different layers.
-        window_size (int): Window size. Default: 7
-        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4
-        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True
-        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None
-        drop_rate (float): Dropout rate. Default: 0
-        attn_drop_rate (float): Attention dropout rate. Default: 0
+        img_size (int | tuple(int)): Input image size. Default 224         图片大小
+        patch_size (int | tuple(int)): Patch size. Default: 4              块大小
+        in_chans (int): Number of input image channels. Default: 3         通道个数
+        num_classes (int): Number of classes for classification head. Default: 1000   类别个数
+        embed_dim (int): Patch embedding dimension. Default: 96             块嵌入特征维度
+        depths (tuple(int)): Depth of each Swin Transformer layer.           每个Swin Transformer层的深度
+        num_heads (tuple(int)): Number of attention heads in different layers.     attention头的个数
+        window_size (int): Window size. Default: 7                             窗口大小
+        mlp_ratio (float): Ratio of mlp hidden dim to embedding dim. Default: 4         MLP中隐层维度到嵌入维度的比率
+        qkv_bias (bool): If True, add a learnable bias to query, key, value. Default: True     qkv是否需要加偏置项
+        qk_scale (float): Override default qk scale of head_dim ** -0.5 if set. Default: None  放缩因子
+        drop_rate (float): Dropout rate. Default: 0              dropout比率
+        attn_drop_rate (float): Attention dropout rate. Default: 0    attention层的dropout比率
         drop_path_rate (float): Stochastic depth rate. Default: 0.1
-        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.
-        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False
-        patch_norm (bool): If True, add normalization after patch embedding. Default: True
-        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False
+        norm_layer (nn.Module): Normalization layer. Default: nn.LayerNorm.    归一化层，层归一化
+        ape (bool): If True, add absolute position embedding to the patch embedding. Default: False   是否添加绝对位置嵌入
+        patch_norm (bool): If True, add normalization after patch embedding. Default: True   是否在块嵌入后添加归一化
+        use_checkpoint (bool): Whether to use checkpointing to save memory. Default: False    是否使用checkpointing节省显存
     """
 
-    def __init__(self, img_size=224, patch_size=4, in_chans=3, num_classes=1000,
-                 embed_dim=96, depths=[2, 2, 2, 2], depths_decoder=[1, 2, 2, 2], num_heads=[3, 6, 12, 24],
-                 window_size=7, mlp_ratio=4., qkv_bias=True, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
-                 norm_layer=nn.LayerNorm, ape=False, patch_norm=True,
-                 use_checkpoint=False, final_upsample="expand_first", **kwargs):
+    def __init__(self,
+                 img_size=224,
+                 patch_size=4,
+                 in_chans=3,
+                 num_classes=1000,
+                 embed_dim=96,
+                 depths=[2, 2, 2, 2],
+                 depths_decoder=[1, 2, 2, 2],
+                 num_heads=[3, 6, 12, 24],
+                 window_size=7,
+                 mlp_ratio=4.,
+                 qkv_bias=True,
+                 qk_scale=None,
+                 drop_rate=0.,
+                 attn_drop_rate=0.,
+                 drop_path_rate=0.1,
+                 norm_layer=nn.LayerNorm,
+                 ape=False,
+                 patch_norm=True,
+                 use_checkpoint=False,
+                 final_upsample="expand_first",
+                 **kwargs):
         super().__init__()
 
         print(
@@ -620,7 +636,7 @@ class SwinTransformerSys(nn.Module):
 
         # absolute position embedding
         if self.ape:
-            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))
+            self.absolute_pos_embed = nn.Parameter(torch.zeros(1, num_patches, embed_dim))   # 1 x (56*56) x 96
             trunc_normal_(self.absolute_pos_embed, std=.02)
 
         self.pos_drop = nn.Dropout(p=drop_rate)
@@ -630,7 +646,7 @@ class SwinTransformerSys(nn.Module):
 
         # build encoder and bottleneck layers
         self.layers = nn.ModuleList()
-        for i_layer in range(self.num_layers):
+        for i_layer in range(self.num_layers):  # [0,1,2,3]
             layer = BasicLayer(dim=int(embed_dim * 2 ** i_layer),
                                input_resolution=(patches_resolution[0] // (2 ** i_layer),
                                                  patches_resolution[1] // (2 ** i_layer)),
@@ -638,8 +654,10 @@ class SwinTransformerSys(nn.Module):
                                num_heads=num_heads[i_layer],
                                window_size=window_size,
                                mlp_ratio=self.mlp_ratio,
-                               qkv_bias=qkv_bias, qk_scale=qk_scale,
-                               drop=drop_rate, attn_drop=attn_drop_rate,
+                               qkv_bias=qkv_bias,
+                               qk_scale=qk_scale,
+                               drop=drop_rate,
+                               attn_drop=attn_drop_rate,
                                drop_path=dpr[sum(depths[:i_layer]):sum(depths[:i_layer + 1])],
                                norm_layer=norm_layer,
                                downsample=PatchMerging if (i_layer < self.num_layers - 1) else None,
@@ -683,8 +701,10 @@ class SwinTransformerSys(nn.Module):
         if self.final_upsample == "expand_first":
             print("---final upsample expand_first---")
             self.up = FinalPatchExpand_X4(input_resolution=(img_size // patch_size, img_size // patch_size),
-                                          dim_scale=4, dim=embed_dim)
-            self.output = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes, kernel_size=1, bias=False)
+                                          dim_scale=4,
+                                          dim=embed_dim)
+            self.output = nn.Conv2d(in_channels=embed_dim, out_channels=self.num_classes,
+                                    kernel_size=(1, 1), bias=False)
 
         self.apply(self._init_weights)
 
@@ -706,8 +726,8 @@ class SwinTransformerSys(nn.Module):
         return {'relative_position_bias_table'}
 
     # Encoder and Bottleneck
-    def forward_features(self, x):
-        x = self.patch_embed(x)
+    def forward_features(self, x):  # x: BCHW
+        x = self.patch_embed(x)    # BCHW --> B(Ph*Pw)C
         if self.ape:
             x = x + self.absolute_pos_embed
         x = self.pos_drop(x)
@@ -749,7 +769,7 @@ class SwinTransformerSys(nn.Module):
         return x
 
     def forward(self, x):
-        x, x_downsample = self.forward_features(x)
+        x, x_downsample = self.forward_features(x)   # x: BCHW
         x = self.forward_up_features(x, x_downsample)
         x = self.up_x4(x)
 

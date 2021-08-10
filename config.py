@@ -12,6 +12,9 @@ def parse_args():
 
     # data
     parser.add_argument('--data_root', default='', type=str)
+    parser.add_argument('--action', default='', type=str)
+    parser.add_argument('--test_images_dir', default='', type=str)
+    parser.add_argument('--test_gts_dir', default='', type=str)
     parser.add_argument('--dataset_type', default='', type=str)
     parser.add_argument('--train_subset', default='train', type=str)
     parser.add_argument('--val_subset', default='val', type=str)
@@ -57,7 +60,8 @@ def parse_args():
     # hardware setting
     parser.add_argument('--cuda', default=True, type=bool,
                         help='Use GPU calculating')
-
+    parser.add_argument('--seed', type=int,
+                        default=1234, help='random seed')
     # from Swin-Unet
     parser.add_argument('--img_size', type=int,
                         default=224, help='input patch size of network input')
