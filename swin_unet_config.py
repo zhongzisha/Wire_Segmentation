@@ -197,6 +197,10 @@ def update_config(config, args):
     # merge from specific arguments
     if args.batch_size:
         config.DATA.BATCH_SIZE = args.batch_size
+    if args.img_size:
+        config.DATA.IMG_SIZE = args.img_size
+    if args.patch_size:
+        config.MODEL.SWIN.PATCH_SIZE = args.patch_size
     if args.zip:
         config.DATA.ZIP_MODE = True
     if args.cache_mode:

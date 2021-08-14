@@ -24,7 +24,7 @@ from torch.nn.modules.loss import CrossEntropyLoss
 #  Load the data and extract patches
 def get_dataloader(args):
     if args.dataset_type == 'GdDataset':
-        crop_shape = (224, 224) if args.network == 'Swin_Unet' else None
+        crop_shape = (args.img_size, args.img_size) if args.network == 'Swin_Unet' else None
         print('crop_shape: ', crop_shape)
         train_set = GdDataset(data_root=args.data_root, subset=args.train_subset, crop_shape=crop_shape)
         val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None)

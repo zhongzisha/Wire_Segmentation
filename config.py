@@ -65,6 +65,8 @@ def parse_args():
     # from Swin-Unet
     parser.add_argument('--img_size', type=int,
                         default=224, help='input patch size of network input')
+    parser.add_argument('--patch_size', type=int,
+                        default=4, help='swin patch size of network input')
     parser.add_argument('--num_classes', type=int,
                         default=2, help='output channel of network')
     parser.add_argument('--cfg', type=str, metavar="FILE", help='path to config file', )
