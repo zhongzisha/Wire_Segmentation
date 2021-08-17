@@ -24,7 +24,7 @@ from torch.nn.modules.loss import CrossEntropyLoss
 #  Load the data and extract patches
 def get_dataloader(args):
     if args.dataset_type == 'GdDataset':
-        crop_shape = (args.img_size, args.img_size) if args.network == 'Swin_Unet' else None
+        crop_shape = (args.img_size, args.img_size) if 'Swin_Unet' in args.network else None
         print('crop_shape: ', crop_shape)
         train_set = GdDataset(data_root=args.data_root, subset=args.train_subset, crop_shape=crop_shape)
         val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None)
@@ -341,6 +341,16 @@ def main():
     network_name = args.network
     if network_name == 'U_Net':
         net = models.UNetFamily.U_Net(img_ch=3, output_ch=2).to(device)
+    elif network_name == 'U_Net_4layers_V1':
+        net = models.UNetFamily.U_Net_4layers_V1(img_ch=3, output_ch=2).to(device)
+    elif network_name == 'U_Net_4layers_V2':
+        net = models.UNetFamily.U_Net_4layers_V2(img_ch=3, output_ch=2).to(device)
+    elif network_name == 'U_Net_4layers_V3':
+        net = models.UNetFamily.U_Net_4layers_V3(img_ch=3, output_ch=2).to(device)
+    elif network_name == 'U_Net_2layers':
+        net = models.UNetFamily.U_Net_2layers(img_ch=3, output_ch=2).to(device)
+    elif network_name == 'U_Net_3layers':
+        net = models.UNetFamily.U_Net_3layers(img_ch=3, output_ch=2).to(device)
     elif network_name == 'Dense_Unet':
         net = models.UNetFamily.Dense_Unet(in_chan=3, out_chan=2).to(device)
     elif network_name == 'R2AttU_Net':
@@ -357,12 +367,24 @@ def main():
                                img_size=args.img_size,
                                num_classes=args.num_classes).to(device)
         net.load_from(net_config)
+    elif network_name == 'Swin_Unet_V2':
+        net_config = get_config(args)
+        net = models.Swin_Unet_V2(config=net_config,
+                               img_size=args.img_size,
+                               num_classes=args.num_classes).to(device)
+        net.load_from(net_config)
+    elif network_name == 'Swin_Unet_V3':
+        net_config = get_config(args)
+        net = models.Swin_Unet_V3(config=net_config,
+                               img_size=args.img_size,
+                               num_classes=args.num_classes).to(device)
+        net.load_from(net_config)
     else:
         print('wrong network type. exit.')
         sys.exit(-1)
     print("Total number of parameters: " + str(count_parameters(net)))
 
-    if network_name == 'Swin_Unet':
+    if 'Swin_Unet' in network_name:
         # log.save_graph(net, torch.randn((1, 3, 224, 224)).to(device).to(
         #     device=device))  # Save the model structure to the tensorboard file
         pass
@@ -378,7 +400,7 @@ def main():
 
         save_dir = os.path.join(save_path, 'predictions')
         test(args.test_images_dir, args.test_gts_dir, net, device,
-             patch_size=args.img_size if network_name == 'Swin_Unet' else None,
+             patch_size=args.img_size if 'Swin_Unet' in network_name else None,
              save_path=save_dir)
         sys.exit(-1)
 
@@ -394,7 +416,7 @@ def main():
     # lr_scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.5)
     # optimizer = optim.SGD(net.parameters(),lr=lr_schedule[0], momentum=0.9, weight_decay=5e-4, nesterov=True)
     base_lr = args.lr
-    if network_name == 'Swin_Unet':
+    if 'Swin_Unet' in network_name:
         criterion = SwinUnetCriterion(num_class=args.num_classes)
         optimizer = optim.SGD(net.parameters(), lr=base_lr, momentum=0.9, weight_decay=0.0001)
         lr_scheduler = None
@@ -441,7 +463,7 @@ def main():
         train_log = OrderedDict([('train_loss', train_loss.avg)])
 
         # val stage
-        if network_name == 'Swin_Unet':
+        if 'Swin_Unet' in network_name:
             val_log = val(val_loader, net, criterion, device, patch_size=args.img_size)
         else:
             val_log = val(val_loader, net, criterion, device)
