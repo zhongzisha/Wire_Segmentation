@@ -367,6 +367,12 @@ def main():
                                img_size=args.img_size,
                                num_classes=args.num_classes).to(device)
         net.load_from(net_config)
+    elif network_name == 'Swin_Unet_V1':
+        net_config = get_config(args)
+        net = models.Swin_Unet(config=net_config,
+                               img_size=args.img_size,
+                               num_classes=args.num_classes).to(device)
+        net.load_from(net_config)
     elif network_name == 'Swin_Unet_V2':
         net_config = get_config(args)
         net = models.Swin_Unet_V2(config=net_config,
@@ -376,6 +382,11 @@ def main():
     elif network_name == 'Swin_Unet_V3':
         net_config = get_config(args)
         net = models.Swin_Unet_V3(config=net_config,
+                               img_size=args.img_size,
+                               num_classes=args.num_classes).to(device)
+    elif network_name == 'Swin_Unet_V4':
+        net_config = get_config(args)
+        net = models.Swin_Unet_V4(config=net_config,
                                img_size=args.img_size,
                                num_classes=args.num_classes).to(device)
         net.load_from(net_config)
