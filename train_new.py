@@ -361,6 +361,7 @@ def main():
         net = models.UNetFamily.R2U_Net(img_ch=3, output_ch=2).to(device)
     elif network_name == 'LadderNet':
         net = models.LadderNet(inplanes=3, num_classes=2, layers=3, filters=16).to(device)
+
     elif network_name == 'Swin_Unet':
         net_config = get_config(args)
         net = models.Swin_Unet(config=net_config,
