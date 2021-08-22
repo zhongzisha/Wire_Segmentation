@@ -787,7 +787,7 @@ class SwinTransformerSys(nn.Module):
             if inx == 0:
                 x = layer_up(x)
             else:
-                x = torch.cat([x, x_downsample[3 - inx]], -1)
+                x = torch.cat([x, x_downsample[self.num_layers - 1 - inx]], -1)
                 x = self.concat_back_dim[inx](x)
                 x = layer_up(x)
 
