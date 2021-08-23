@@ -19,15 +19,20 @@ from lib.metrics import Evaluate
 import models
 from swin_unet_config import get_config
 from torch.nn.modules.loss import CrossEntropyLoss
+import segmentation_models_pytorch as smp
 
 
 #  Load the data and extract patches
 def get_dataloader(args):
     if args.dataset_type == 'GdDataset':
+        divide255 = True
+        # if args.network == 'UnetPlusPlus':
+        #     divide255 = False
         crop_shape = (args.img_size, args.img_size) if 'Swin_Unet' in args.network else None
         print('crop_shape: ', crop_shape)
-        train_set = GdDataset(data_root=args.data_root, subset=args.train_subset, crop_shape=crop_shape)
-        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None)
+        train_set = GdDataset(data_root=args.data_root, subset=args.train_subset, crop_shape=crop_shape,
+                              divide255=divide255)
+        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None, divide255=divide255)
     else:
         patches_imgs_train, patches_masks_train = get_data(data_root=args.data_root, subset=args.train_subset)
         patches_imgs_val, patches_masks_val = get_data(data_root=args.data_root, subset=args.val_subset)
@@ -155,7 +160,7 @@ def val(val_loader, net, criterion=None, device=None, patch_size=None):
                     val_loss.update(loss.item(), image.size(0))
 
                 outputs = preds.cpu().detach().numpy()
-                gts = label.cpu().detach().numpy()   # BHW
+                gts = label.cpu().detach().numpy()  # BHW
                 preds = outputs[:, 1]  # BHW
                 evaluater.add_batch(gts, preds)
                 all_gts.append(gts)
@@ -214,7 +219,7 @@ def test(test_images_dir, test_gts_dir, net, device=None, patch_size=None, save_
                 image_np = cv2.imread(img_filename)
                 image = np.transpose(image_np, [2, 0, 1]).astype(np.float32) / 255
 
-                image = torch.from_numpy(image).unsqueeze(0).to(device)   # 1CHW
+                image = torch.from_numpy(image).unsqueeze(0).to(device)  # 1CHW
                 h_stride, w_stride = patch_size // 2, patch_size // 2
                 h_crop, w_crop = patch_size, patch_size
                 batch_size, _, h_img, w_img = image.size()
@@ -351,6 +356,10 @@ def main():
         net = models.UNetFamily.U_Net_2layers(img_ch=3, output_ch=2).to(device)
     elif network_name == 'U_Net_3layers':
         net = models.UNetFamily.U_Net_3layers(img_ch=3, output_ch=2).to(device)
+    elif network_name == 'UnetPlusPlus':
+        net = smp.UnetPlusPlus(in_channels=3, classes=2, activation='softmax2d').to(device)
+    elif network_name == 'SMP_Unet':
+        net = smp.Unet(in_channels=3, classes=2, activation='softmax2d').to(device)
     elif network_name == 'Dense_Unet':
         net = models.UNetFamily.Dense_Unet(in_chan=3, out_chan=2).to(device)
     elif network_name == 'R2AttU_Net':
@@ -377,19 +386,19 @@ def main():
     elif network_name == 'Swin_Unet_V2':
         net_config = get_config(args)
         net = models.Swin_Unet_V2(config=net_config,
-                               img_size=args.img_size,
-                               num_classes=args.num_classes).to(device)
+                                  img_size=args.img_size,
+                                  num_classes=args.num_classes).to(device)
         net.load_from(net_config)
     elif network_name == 'Swin_Unet_V3':
         net_config = get_config(args)
         net = models.Swin_Unet_V3(config=net_config,
-                               img_size=args.img_size,
-                               num_classes=args.num_classes).to(device)
+                                  img_size=args.img_size,
+                                  num_classes=args.num_classes).to(device)
     elif network_name == 'Swin_Unet_V4':
         net_config = get_config(args)
         net = models.Swin_Unet_V4(config=net_config,
-                               img_size=args.img_size,
-                               num_classes=args.num_classes).to(device)
+                                  img_size=args.img_size,
+                                  num_classes=args.num_classes).to(device)
         net.load_from(net_config)
     else:
         print('wrong network type. exit.')
@@ -460,7 +469,7 @@ def main():
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
 
-            outputs = net(inputs)    # here, for Swin_Unet, outputs is logits, others are probs
+            outputs = net(inputs)  # here, for Swin_Unet, outputs is logits, others are probs
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
