@@ -26,13 +26,17 @@ import segmentation_models_pytorch as smp
 def get_dataloader(args):
     if args.dataset_type == 'GdDataset':
         divide255 = True
-        # if args.network == 'UnetPlusPlus':
-        #     divide255 = False
+        mean = None
+        std = None
+        if 'SMP_' in args.network:
+            mean = [0.485, 0.456, 0.406]
+            std = [0.229, 0.224, 0.225]
         crop_shape = (args.img_size, args.img_size) if 'Swin_Unet' in args.network else None
         print('crop_shape: ', crop_shape)
         train_set = GdDataset(data_root=args.data_root, subset=args.train_subset, crop_shape=crop_shape,
-                              divide255=divide255)
-        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None, divide255=divide255)
+                              mean=mean, std=std)
+        val_set = GdDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None,
+                            mean=mean, std=std)
     else:
         patches_imgs_train, patches_masks_train = get_data(data_root=args.data_root, subset=args.train_subset)
         patches_imgs_val, patches_masks_val = get_data(data_root=args.data_root, subset=args.val_subset)
@@ -356,7 +360,7 @@ def main():
         net = models.UNetFamily.U_Net_2layers(img_ch=3, output_ch=2).to(device)
     elif network_name == 'U_Net_3layers':
         net = models.UNetFamily.U_Net_3layers(img_ch=3, output_ch=2).to(device)
-    elif network_name == 'UnetPlusPlus':
+    elif network_name == 'SMP_UnetPlusPlus':
         net = smp.UnetPlusPlus(in_channels=3, classes=2, activation='softmax2d').to(device)
     elif network_name == 'SMP_Unet':
         net = smp.Unet(in_channels=3, classes=2, activation='softmax2d').to(device)
@@ -416,7 +420,7 @@ def main():
     if args.action == 'do_test':
         # Load checkpoint
         print('==> Loading checkpoint...')
-        checkpoint = torch.load(join(save_path, 'best_model.pth'))
+        checkpoint = torch.load(join(save_path, args.pth_filename))
         net.load_state_dict(checkpoint['net'])
 
         save_dir = os.path.join(save_path, 'predictions')
@@ -484,11 +488,12 @@ def main():
         train_log = OrderedDict([('train_loss', train_loss.avg)])
 
         # val stage
-        if 'Swin_Unet' in network_name:
-            val_log = val(val_loader, net, criterion, device, patch_size=args.img_size)
-        else:
-            val_log = val(val_loader, net, criterion, device)
+        # if 'Swin_Unet' in network_name:
+        #     val_log = val(val_loader, net, criterion, device, patch_size=args.img_size)
+        # else:
+        #     val_log = val(val_loader, net, criterion, device)
 
+        val_log = {}
         log.update(epoch, train_log, val_log)  # Add log information
 
         if lr_scheduler is not None:
@@ -496,20 +501,20 @@ def main():
 
         # Save checkpoint of latest and best model.
         state = {'net': net.state_dict(), 'optimizer': optimizer.state_dict(), 'epoch': epoch}
-        torch.save(state, join(save_path, 'latest_model.pth'))
+        torch.save(state, join(save_path, 'epoch-%d.pth' % epoch))
         trigger += 1
-        if val_log['val_auc_roc'] > best['AUC_roc']:
-            print('\033[0;33mSaving best model!\033[0m')
-            torch.save(state, join(save_path, 'best_model.pth'))
-            best['epoch'] = epoch
-            best['AUC_roc'] = val_log['val_auc_roc']
-            trigger = 0
-        print('Best performance at Epoch: {} | AUC_roc: {}'.format(best['epoch'], best['AUC_roc']))
-        # early stopping
-        if not args.early_stop is None:
-            if trigger >= args.early_stop:
-                print("=> early stopping")
-                break
+        # if val_log['val_auc_roc'] > best['AUC_roc']:
+        #     print('\033[0;33mSaving best model!\033[0m')
+        #     torch.save(state, join(save_path, 'best_model.pth'))
+        #     best['epoch'] = epoch
+        #     best['AUC_roc'] = val_log['val_auc_roc']
+        #     trigger = 0
+        # print('Best performance at Epoch: {} | AUC_roc: {}'.format(best['epoch'], best['AUC_roc']))
+        # # early stopping
+        # if not args.early_stop is None:
+        #     if trigger >= args.early_stop:
+        #         print("=> early stopping")
+        #         break
         torch.cuda.empty_cache()
 
 

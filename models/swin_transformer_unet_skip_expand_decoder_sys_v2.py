@@ -575,6 +575,7 @@ class PatchEmbed(nn.Module):
         self.in_chans = in_chans
         self.embed_dim = embed_dim
 
+        # TODO zzs v2就是改了这里
         # self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
         self.proj = ConvProj(img_ch=in_chans, embed_dim=embed_dim)
 

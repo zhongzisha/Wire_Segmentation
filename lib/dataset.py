@@ -45,11 +45,20 @@ class TrainDataset(Dataset):
 
 
 class GdDataset(Dataset):
-    def __init__(self, data_root, subset="train", crop_shape=None, divide255=True):
+    def __init__(self, data_root, subset="train", crop_shape=None,
+                 mean=None, std=None):
         self.data_root = data_root
         self.subset = subset
         self.transforms = None
-        self.divide255 = divide255
+        if mean is not None:
+            self.mean = np.array(mean)
+        else:
+            self.mean = None
+        if std is not None:
+            self.std = np.array(std)
+        else:
+            self.std = None
+
         if 'train' in subset:
             if crop_shape is not None:
                 self.transforms = Compose([
@@ -80,9 +89,13 @@ class GdDataset(Dataset):
         mask = Image.open('%s/%s/annotations/%s.png' % (self.data_root, self.subset, self.prefixes[idx])).convert('L')
         data = Image.open('%s/%s/images/%s.jpg' % (self.data_root, self.subset, self.prefixes[idx]))
 
-        data = np.array(data, dtype=np.float32)
-        if self.divide255:
-            data /= 255
+        data = np.array(data, dtype=np.float32) / 255
+
+        if self.mean is not None:
+            data = data - self.mean
+        if self.std is not None:
+            data = data / self.std
+
         data = np.transpose(data, [2, 0, 1])
         mask = np.array(mask)[None]
 

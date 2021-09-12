@@ -618,6 +618,7 @@ class PatchEmbed(nn.Module):
         self.in_chans = in_chans
         self.embed_dim = embed_dim
 
+        # TODO zzs 这里改成了两个卷积
         # self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
         self.proj = ConvProj(img_ch=in_chans, embed_dim=embed_dim)
 
@@ -783,6 +784,7 @@ class SwinTransformerSys(nn.Module):
 
         if self.final_upsample == "expand_first":
             print("---final upsample expand_first---")
+            # TODO zzs 改了最后一层上采样操作
             # self.up = FinalPatchExpand_X4(input_resolution=(img_size // patch_size, img_size // patch_size),
             #                               dim_scale=4,
             #                               dim=embed_dim)

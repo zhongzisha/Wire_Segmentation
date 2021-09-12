@@ -56,6 +56,7 @@ def parse_args():
     parser.add_argument('--test_patch_width', default=512)
     parser.add_argument('--stride_height', default=512)
     parser.add_argument('--stride_width', default=512)
+    parser.add_argument('--pth_filename', default='', type=str)
 
     # hardware setting
     parser.add_argument('--cuda', default=True, type=bool,
