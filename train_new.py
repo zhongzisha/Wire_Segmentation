@@ -276,6 +276,8 @@ def test(test_images_dir, test_gts_dir, net, device=None, patch_size=None, save_
                         np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255,
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img)
+                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'),
+                                np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255)
     else:
         with torch.no_grad():
             for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
@@ -308,6 +310,8 @@ def test(test_images_dir, test_gts_dir, net, device=None, patch_size=None, save_
                         np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255,
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img)
+                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'),
+                                np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255)
 
     results = np.array(results)
     print(results)
@@ -423,7 +427,7 @@ def main():
         checkpoint = torch.load(join(save_path, args.pth_filename))
         net.load_state_dict(checkpoint['net'])
 
-        save_dir = os.path.join(save_path, 'predictions')
+        save_dir = os.path.join(save_path, args.test_subset)
         test(args.test_images_dir, args.test_gts_dir, net, device,
              patch_size=args.img_size if 'Swin_Unet' in network_name else None,
              save_path=save_dir)
