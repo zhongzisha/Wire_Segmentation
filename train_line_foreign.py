@@ -42,14 +42,15 @@ def get_dataloader(args):
     return train_loader, val_loader
 
 
-def test(test_images_dir, test_gts_dir, net, device=None, patch_size=None, save_path=None):
+def test(test_images_dir, test_gts_dir, net,
+         device=None, patch_size=None, save_path=None,
+         num_classes=2):
     import glob
     img_filenames = glob.glob(os.path.join(test_images_dir, '*.jpg'))
 
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-
-    num_classes = 2
+    palette = np.array([[0, 0, 0], [255, 255, 255], [255, 255, 0], [0, 255, 255]])
     net.eval()
     val_loss = AverageMeter()
     if patch_size is not None:  # sliding window inference, from mmsegmentation
@@ -89,27 +90,30 @@ def test(test_images_dir, test_gts_dir, net, device=None, patch_size=None, save_
                 preds = preds / count_mat
                 preds = torch.softmax(preds, dim=1)
 
-                outputs = preds.cpu().detach().numpy()
+                outputs = preds.data.cpu().numpy()
+                pred = np.argmax(outputs, axis=1)[0]
+                pred_color = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+                for label, color in enumerate(palette):
+                    pred_color[pred == label, :] = color
 
                 file_prefix = img_filename.split(os.sep)[-1].replace('.jpg', '')
                 gt_filename = os.path.join(test_gts_dir, file_prefix + '.png')
                 if os.path.exists(gt_filename):
                     gt = cv2.imread(gt_filename)[:, :, 0]
                 else:
-                    gt = None
-                if gt is not None:
-                    pred = np.argmax(outputs, axis=1)[0]
-                else:
                     gt = np.zeros((h_img, w_img), dtype=np.uint8)
+                gt_color = np.zeros((gt.shape[0], gt.shape[1], 3), dtype=np.uint8)
+                for label, color in enumerate(palette):
+                    gt_color[gt == label, :] = color
+
                 if save_path is not None:
                     final_img = np.concatenate([
                         image_np,
-                        np.transpose(np.stack([gt, gt, gt]), [1, 2, 0]) * 255,
-                        np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255,
+                        gt_color,
+                        pred_color
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img)
-                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'),
-                                np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255)
+                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
     else:
         with torch.no_grad():
             for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
@@ -121,26 +125,29 @@ def test(test_images_dir, test_gts_dir, net, device=None, patch_size=None, save_
                 outputs = net(image)
 
                 outputs = outputs.data.cpu().numpy()
+                pred = np.argmax(outputs, axis=1)[0]
+                pred_color = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+                for label, color in enumerate(palette):
+                    pred_color[pred == label, :] = color
 
                 file_prefix = img_filename.split(os.sep)[-1].replace('.jpg', '')
                 gt_filename = os.path.join(test_gts_dir, file_prefix + '.png')
                 if os.path.exists(gt_filename):
                     gt = cv2.imread(gt_filename)[:, :, 0]
                 else:
-                    gt = None
-                if gt is not None:
-                    pred = np.argmax(outputs, axis=1)[0]
-                else:
                     gt = np.zeros((h_img, w_img), dtype=np.uint8)
+                gt_color = np.zeros((gt.shape[0], gt.shape[1], 3), dtype=np.uint8)
+                for label, color in enumerate(palette):
+                    gt_color[gt == label, :] = color
+
                 if save_path is not None:
                     final_img = np.concatenate([
                         image_np,
-                        np.transpose(np.stack([gt, gt, gt]), [1, 2, 0]) * 255,
-                        np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255,
+                        gt_color,
+                        pred_color
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img)
-                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'),
-                                np.transpose(np.stack([pred, pred, pred]), [1, 2, 0]) * 255)
+                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
 
     log = OrderedDict([('val_loss', val_loss.avg)])
     return log
@@ -161,21 +168,21 @@ def main():
 
     network_name = args.network
     if network_name == 'U_Net':
-        net = models.UNetFamily.U_Net(img_ch=3, output_ch=args.classes).to(device)
+        net = models.UNetFamily.U_Net(img_ch=3, output_ch=args.num_classes).to(device)
     elif network_name == 'SMP_UnetPlusPlus':
-        net = smp.UnetPlusPlus(in_channels=3, classes=args.classes, activation='softmax2d').to(device)
+        net = smp.UnetPlusPlus(in_channels=3, classes=args.num_classes, activation='softmax2d').to(device)
     elif network_name == 'SMP_Unet':
-        net = smp.Unet(in_channels=3, classes=args.classes, activation='softmax2d').to(device)
+        net = smp.Unet(in_channels=3, classes=args.num_classes, activation='softmax2d').to(device)
     elif network_name == 'Dense_Unet':
-        net = models.UNetFamily.Dense_Unet(in_chan=3, out_chan=args.classes).to(device)
+        net = models.UNetFamily.Dense_Unet(in_chan=3, out_chan=args.num_classes).to(device)
     elif network_name == 'R2AttU_Net':
-        net = models.UNetFamily.R2AttU_Net(img_ch=3, output_ch=args.classes).to(device)
+        net = models.UNetFamily.R2AttU_Net(img_ch=3, output_ch=args.num_classes).to(device)
     elif network_name == 'AttU_Net':
-        net = models.UNetFamily.AttU_Net(img_ch=3, output_ch=args.classes).to(device)
+        net = models.UNetFamily.AttU_Net(img_ch=3, output_ch=args.num_classes).to(device)
     elif network_name == 'R2U_Net':
-        net = models.UNetFamily.R2U_Net(img_ch=3, output_ch=args.classes).to(device)
+        net = models.UNetFamily.R2U_Net(img_ch=3, output_ch=args.num_classes).to(device)
     elif network_name == 'LadderNet':
-        net = models.LadderNet(inplanes=3, num_classes=args.classes, layers=3, filters=16).to(device)
+        net = models.LadderNet(inplanes=3, num_classes=args.num_classes, layers=3, filters=16).to(device)
     else:
         print('wrong network type. exit.')
         sys.exit(-1)
@@ -193,7 +200,8 @@ def main():
         save_dir = os.path.join(save_path, args.test_subset)
         test(args.test_images_dir, args.test_gts_dir, net, device,
              patch_size=args.img_size,
-             save_path=save_dir)
+             save_path=save_dir,
+             num_classes=args.num_classes)
         sys.exit(-1)
 
     # torch.nn.init.kaiming_normal(net, mode='fan_out')      # Modify default initialization method
@@ -208,7 +216,7 @@ def main():
     # lr_scheduler = optim.lr_scheduler.StepLR(optimizer,step_size=10,gamma=0.5)
     # optimizer = optim.SGD(net.parameters(),lr=lr_schedule[0], momentum=0.9, weight_decay=5e-4, nesterov=True)
     base_lr = args.lr
-    criterion = DiceLoss(n_classes=args.classes)  # Initialize loss function
+    criterion = DiceLoss(n_classes=args.num_classes)  # Initialize loss function
     optimizer = optim.Adam(net.parameters(), lr=base_lr)
     lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.N_epochs, eta_min=0)
 
