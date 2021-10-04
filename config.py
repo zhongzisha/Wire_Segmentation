@@ -44,6 +44,8 @@ def parse_args():
                         help='initial learning rate')
     parser.add_argument('--val_on_test', default=False, type=bool,
                         help='Validation on testset')
+    parser.add_argument('--num_workers', default=2, type=int,
+                        help='number of workers for data loaders')
 
     # for pre_trained checkpoint
     parser.add_argument('--start_epoch', default=1,

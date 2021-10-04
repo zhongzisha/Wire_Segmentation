@@ -171,6 +171,71 @@ class LineForeignDataset(Dataset):
         return data, mask.squeeze(0)
 
 
+class McSegDataset(Dataset):
+    def __init__(self, data_root, subset="train",
+                 crop_shape=None,
+                 mean=None, std=None):
+        self.data_root = data_root
+        self.subset = subset
+        self.transforms = None
+        if mean is not None:
+            self.mean = np.array(mean)
+        else:
+            self.mean = None
+        if std is not None:
+            self.std = np.array(std)
+        else:
+            self.std = None
+
+        if 'train' in subset:
+            if crop_shape is not None:
+                self.transforms = Compose([
+                    # RandomResize([56,72],[56,72]),
+                    # RandomCrop((48, 48)),
+                    RandomFlip_LR(prob=0.5),
+                    RandomFlip_UD(prob=0.5),
+                    RandomRotate(),
+                    RandomCrop(shape=crop_shape)
+                ])
+            else:
+                self.transforms = Compose([
+                    # RandomResize([56,72],[56,72]),
+                    # RandomCrop((48, 48)),
+                    RandomFlip_LR(prob=0.5),
+                    RandomFlip_UD(prob=0.5),
+                    RandomRotate()
+                ])
+        with open('%s/%s.txt' % (data_root, subset)) as fp:
+            self.prefixes = [line.strip() for line in fp.readlines()]
+
+    def __len__(self):
+        return len(self.prefixes)
+
+    def __getitem__(self, idx):
+        # '%s/%s/images/%s.jpg' % (data_root, subset, prefix)
+        # '%s/%s/annotations/%s.png' % (data_root, subset, prefix)
+        mask = Image.open('%s/annotations/%s/%s.png' % (self.data_root, self.subset, self.prefixes[idx])).convert('L')
+        data = Image.open('%s/images/%s/%s.jpg' % (self.data_root, self.subset, self.prefixes[idx]))
+
+        data = np.array(data, dtype=np.float32) / 255
+
+        if self.mean is not None:
+            data = data - self.mean
+        if self.std is not None:
+            data = data / self.std
+
+        data = np.transpose(data, [2, 0, 1])
+        mask = np.array(mask)[None]
+        mask[mask < 255] -= 1
+
+        data = torch.from_numpy(data).float()
+        mask = torch.from_numpy(mask).long()
+
+        if self.transforms:
+            data, mask = self.transforms(data, mask)
+        return data, mask.squeeze(0)
+
+
 # ----------------------data augment-------------------------------------------
 class Resize:
     def __init__(self, shape):

@@ -124,7 +124,7 @@ class Attention_block(nn.Module):  # attention Gate
 
 # ==================================================================
 class U_Net(nn.Module):
-    def __init__(self, img_ch=3, output_ch=1):
+    def __init__(self, img_ch=3, output_ch=1, has_softmax=True):
         super(U_Net, self).__init__()
 
         self.Maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
@@ -148,6 +148,7 @@ class U_Net(nn.Module):
         self.Up_conv2 = conv_block(ch_in=128, ch_out=64)
 
         self.Conv_1x1 = nn.Conv2d(64, output_ch, kernel_size=(1, 1), stride=(1, 1), padding=(0, 0))
+        self.has_softmax = has_softmax
 
     def forward(self, x):
         # encoding path
@@ -184,7 +185,8 @@ class U_Net(nn.Module):
         d2 = self.Up_conv2(d2)
 
         d1 = self.Conv_1x1(d2)
-        d1 = F.softmax(d1, dim=1)  # mine
+        if self.has_softmax:
+            d1 = F.softmax(d1, dim=1)  # mine
 
         return d1
 
