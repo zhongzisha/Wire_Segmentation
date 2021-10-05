@@ -133,7 +133,7 @@ def test(test_images_dir, test_gts_dir, net,
                         pred_color
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img[:, :, ::-1])
-                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
+                    # cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
     else:
         with torch.no_grad():
             for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
@@ -173,7 +173,7 @@ def test(test_images_dir, test_gts_dir, net,
                         pred_color
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img[:, :, ::-1])
-                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
+                    # cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
 
     log = OrderedDict([('val_loss', val_loss.avg)])
     return log

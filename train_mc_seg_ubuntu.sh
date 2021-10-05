@@ -28,7 +28,8 @@ if [ "$ACTION" == "train" ]; then
   --num_classes 4 \
   --img_size $IMG_SIZE \
   --action ${ACTION} \
-  --N_epochs 20
+  --N_epochs 50 \
+  --num_workers 4
 fi
 
 if [ "$ACTION" == "do_test" ]; then
@@ -46,7 +47,7 @@ if [ "$ACTION" == "do_test" ]; then
   --num_classes 4 \
   --img_size $IMG_SIZE \
   --action do_test \
-  --pth_filename epoch-50.pth \
+  --pth_filename $OUTF/$SAVE_DIR/epoch-50.pth \
   --test_images_dir $DATA_ROOT%/val/images \
   --test_gts_dir $DATA_ROOT%/val/annotations
 fi

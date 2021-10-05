@@ -1,11 +1,12 @@
 echo "training ..."
-set LR=0.001
-set BS=8
+set LR=0.0001
+set BS=4
 set IMG_SIZE=512
-set NETWORK=SMP_UnetPlusPlus
+set NETWORK=U_Net
 set DATA_ROOT=E:/Downloads/mc_seg/data
 set OUTF=E:/Downloads/mc_seg/logs
 set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%
+set EPOCH=%1%
 
 @REM python train_mc_seg.py ^
 @REM --outf %OUTF% ^
@@ -37,6 +38,6 @@ python train_mc_seg.py ^
 --num_classes 4 ^
 --img_size %IMG_SIZE% ^
 --action do_test ^
---pth_filename epoch-20.pth ^
+--pth_filename epoch-%EPOCH%.pth ^
 --test_images_dir %DATA_ROOT%/images/val ^
 --test_gts_dir %DATA_ROOT%/annotations/val
