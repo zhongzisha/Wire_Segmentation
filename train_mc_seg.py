@@ -1,5 +1,6 @@
 import sys, os
 
+import cv2
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -15,6 +16,8 @@ from lib.logger import Logger, Print_Logger
 from collections import OrderedDict
 import models
 import segmentation_models_pytorch as smp
+from osgeo import gdal, osr, ogr
+import subprocess
 
 
 def CE_loss(input_logits, target_targets, ignore_index, temperature=1):
@@ -50,6 +53,73 @@ def get_dataloader(args):
     return train_loader, val_loader
 
 
+def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_size=10):
+    ds = gdal.Open(reference_tif, gdal.GA_ReadOnly)
+    print("Driver: {}/{}".format(ds.GetDriver().ShortName,
+                                 ds.GetDriver().LongName))
+    print("Size is {} x {} x {}".format(ds.RasterXSize,
+                                        ds.RasterYSize,
+                                        ds.RasterCount))
+    print("Projection is {}".format(ds.GetProjection()))
+    projection = ds.GetProjection()
+    projection_sr = osr.SpatialReference(wkt=projection)
+    projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
+    geotransform = ds.GetGeoTransform()
+    xOrigin = geotransform[0]
+    yOrigin = geotransform[3]
+    pixelWidth = geotransform[1]
+    pixelHeight = geotransform[5]
+    orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
+    if geotransform:
+        print("Origin = ({}, {})".format(geotransform[0], geotransform[3]))
+        print("Pixel Size = ({}, {})".format(geotransform[1], geotransform[5]))
+        print("IsNorth = ({}, {})".format(geotransform[2], geotransform[4]))
+    ds = None
+
+    driver = gdal.GetDriverByName("GTiff")
+    outdata = driver.Create(save_path, orig_width, orig_height, len(label_maps.keys()), gdal.GDT_Byte)
+    # options=['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
+    # outdata = driver.CreateCopy(save_path, ds, 0, ['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
+    outdata.SetGeoTransform(geotransform)  # sets same geotransform as input
+    outdata.SetProjection(projection)  # sets same projection as input
+
+    for b, (label, label_name) in enumerate(label_maps.items()):
+        print('write image data', b, label, label_name)
+        band = outdata.GetRasterBand(b + 1)
+        mask = (arr == label).astype(np.uint8)
+        mask = cv2.medianBlur(mask, 5)
+
+        # morph operators
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        # remove small connected blobs
+        # find connected components
+        n_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+            mask, connectivity=8)
+        # remove background class
+        sizes = stats[1:, -1]
+        n_components = n_components - 1
+
+        # remove blobs
+        mask_clean = np.zeros(output.shape, dtype=np.uint8)
+        # for every component in the image, keep it only if it's above min_blob_size
+        for i in range(0, n_components):
+            if sizes[i] >= min_blob_size:
+                mask_clean[output == i + 1] = 255
+
+        # current_pred[current_pred == 0] = no_data_value
+        print(np.min(mask_clean), np.max(mask_clean))
+        band.WriteArray(mask_clean, xoff=0, yoff=0)
+        # band.SetNoDataValue(no_data_value)
+        band.FlushCache()
+        del band
+    outdata.FlushCache()
+    del outdata
+    del driver
+
+
 def test(test_images_dir, test_gts_dir, net,
          device=None, patch_size=None, save_path=None,
          num_classes=2, args=None):
@@ -70,7 +140,7 @@ def test(test_images_dir, test_gts_dir, net,
     if patch_size is not None:  # sliding window inference, from mmsegmentation
         with torch.no_grad():
             for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
-                image_np = cv2.imread(img_filename).astype(np.float32)[:,:,::-1] / 255  # bgr -> rgb
+                image_np = cv2.imread(img_filename).astype(np.float32)[:, :, ::-1] / 255  # bgr -> rgb
                 image = image_np.copy()
                 if mean is not None:
                     image -= np.array(mean)
@@ -139,7 +209,7 @@ def test(test_images_dir, test_gts_dir, net,
             for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
                 image_np = cv2.imread(img_filename)
                 h_img, w_img = image_np.shape[:2]
-                image_np = cv2.imread(img_filename).astype(np.float32)[:,:,::-1] / 255  # bgr -> rgb
+                image_np = cv2.imread(img_filename).astype(np.float32)[:, :, ::-1] / 255  # bgr -> rgb
                 image = image_np.copy()
                 if mean is not None:
                     image -= np.array(mean)
@@ -177,6 +247,207 @@ def test(test_images_dir, test_gts_dir, net,
 
     log = OrderedDict([('val_loss', val_loss.avg)])
     return log
+
+
+def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_classes=2, args=None):
+    bands_info_txt = "E:\\Downloads\\mc_seg\\tifs\\bands_info.txt"
+    invalid_tifs_txt = "E:\\Downloads\\mc_seg\\tifs\\invalid_tifs.txt"
+    bands_info = []
+    if os.path.exists(bands_info_txt):
+        with open(bands_info_txt, 'r', encoding='utf-8-sig') as fp:
+            bands_info = [line.strip() for line in fp.readlines()]
+    invalid_tifs = []
+    if os.path.exists(invalid_tifs_txt):
+        with open(invalid_tifs_txt, 'r', encoding='utf-8-sig') as fp:
+            invalid_tifs = [line.strip() for line in fp.readlines()]
+
+    import glob
+    from PIL import Image
+
+    if not os.path.exists(save_root):
+        os.makedirs(save_root)
+    if 'SMP_' in args.network:
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
+    else:
+        mean, std = None, None
+    palette = np.array([[0, 0, 0], [255, 0, 0], [0, 0, 255], [0, 255, 0], [255, 255, 255]])
+    # 'landslide', 'water', 'tree', 'building'
+    label_maps = {
+        1: 'landslide',
+        2: 'water',
+        3: 'tree',
+        4: 'building',
+    }
+    net.eval()
+
+    all_tiffiles = []
+    for tiffile in tiffiles:
+        all_tiffiles += tiffile.split(',')
+
+    for tiffile in all_tiffiles:
+        tiffile_prefix = tiffile.split(os.sep)[-1].replace('.tif', '')
+        if tiffile_prefix in invalid_tifs:
+            continue
+
+        save_path = os.path.join(save_root, tiffile_prefix)
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        # split into small tif files
+        if args.tiled_tifs_dir != '':
+            test_images_dir = os.path.join(args.tiled_tifs_dir, tiffile_prefix, 'tifs')
+            if not os.path.exists(test_images_dir):
+                os.makedirs(test_images_dir)
+                command = r'gdal_retile.py -of GTiff -ps 2048 2048 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
+                    test_images_dir, tiffile
+                )
+                print(command)
+                os.system(command)
+        else:
+            test_images_dir = os.path.join(save_path, 'tifs')
+            if not os.path.exists(test_images_dir):
+                os.makedirs(test_images_dir)
+                command = r'gdal_retile.py -of GTiff -ps 2048 2048 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
+                    test_images_dir, tiffile
+                )
+                print(command)
+                os.system(command)
+
+        results_dir = os.path.join(save_path, 'results')
+        if not os.path.exists(results_dir):
+            os.makedirs(results_dir)
+        tmp_dir = os.path.join(save_path, 'tmp')
+        if not os.path.exists(tmp_dir):
+            os.makedirs(tmp_dir)
+
+        img_filenames = glob.glob(os.path.join(test_images_dir, '*.tif'))
+        if patch_size is not None:  # sliding window inference, from mmsegmentation
+            merge_tif_filenames = []
+            with torch.no_grad():
+                for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
+                    file_prefix = img_filename.split(os.sep)[-1].replace('.tif', '')
+                    save_tif_filename = os.path.join(results_dir, file_prefix + '.tif')
+                    if os.path.exists(save_tif_filename):
+                        merge_tif_filenames.append(save_tif_filename)
+                        continue
+                    # image_np = cv2.imread(img_filename).astype(np.float32)[:,:,::-1] / 255  # bgr -> rgb
+                    image_np = np.array(Image.open(img_filename)).astype(np.float32) / 255
+
+                    if tiffile_prefix in bands_info:
+                        image_np = image_np[:, :, ::-1]
+
+                    image = image_np.copy()
+                    if mean is not None:
+                        image -= np.array(mean)
+                    if std is not None:
+                        image /= np.array(std)
+                    image = np.transpose(image, [2, 0, 1])
+
+                    image = torch.from_numpy(image).unsqueeze(0).to(device)  # 1CHW
+                    h_stride, w_stride = patch_size // 2, patch_size // 2
+                    h_crop, w_crop = patch_size, patch_size
+                    batch_size, _, h_img, w_img = image.size()
+                    h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
+                    w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
+                    preds = image.new_zeros((batch_size, num_classes, h_img, w_img))
+                    count_mat = image.new_zeros((batch_size, 1, h_img, w_img))
+                    for h_idx in range(h_grids):
+                        for w_idx in range(w_grids):
+                            y1 = h_idx * h_stride
+                            x1 = w_idx * w_stride
+                            y2 = min(y1 + h_crop, h_img)
+                            x2 = min(x1 + w_crop, w_img)
+                            y1 = max(y2 - h_crop, 0)
+                            x1 = max(x2 - w_crop, 0)
+                            print(h_idx, w_idx, y1, y2, x1, x2)
+                            crop_img = image[:, :, y1:y2, x1:x2]
+                            crop_img_h, crop_img_w = crop_img.shape[2:]
+                            if crop_img.shape[2:] != (patch_size, patch_size):
+                                crop_img = F.pad(crop_img, (0, int(patch_size - crop_img.shape[3]),
+                                                            0, int(patch_size - crop_img.shape[2])))
+                            crop_seg_logit = net(crop_img)
+                            preds += F.pad(crop_seg_logit[:, :, :crop_img_h, :crop_img_w],
+                                           (int(x1), int(preds.shape[3] - x2), int(y1),
+                                            int(preds.shape[2] - y2)))
+
+                            count_mat[:, :, y1:y2, x1:x2] += 1
+                    assert (count_mat == 0).sum() == 0
+                    if torch.onnx.is_in_onnx_export():
+                        # cast count_mat to constant while exporting to ONNX
+                        count_mat = torch.from_numpy(
+                            count_mat.cpu().detach().numpy()).to(device=image.device)
+                    preds = preds / count_mat
+                    preds = torch.softmax(preds, dim=1)
+
+                    outputs = preds.data.cpu().numpy()
+                    pred = np.argmax(outputs, axis=1)[0] + 1
+                    pred_color = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+                    for label, color in enumerate(palette):
+                        pred_color[pred == label, :] = color
+
+                    gt = np.zeros((h_img, w_img), dtype=np.uint8)
+                    gt_color = np.zeros((gt.shape[0], gt.shape[1], 3), dtype=np.uint8)
+                    for label, color in enumerate(palette):
+                        gt_color[gt == label, :] = color
+
+                    if results_dir is not None:
+                        final_img = np.concatenate([
+                            (image_np * 255).astype(np.uint8),
+                            gt_color,
+                            pred_color
+                        ], axis=1)
+                        # cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img[:, :, ::-1])
+                        # cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
+                        Image.fromarray(final_img).save(os.path.join(results_dir, file_prefix + '.png'))
+
+                        # save_tif_filename = os.path.join(save_path, file_prefix + args.test_image_postfix)
+                        save_numpy_array_to_tif(pred, img_filename, label_maps, save_tif_filename)
+                        merge_tif_filenames.append(save_tif_filename)
+                        # save_path1 = os.path.join(save_path, file_prefix)
+                        # if not os.path.exists(save_path1):
+                        #     os.makedirs(save_path1)
+                        # for label in np.unique(pred):
+                        #     # cv2.imwrite(os.path.join(save_path, file_prefix + '_%s.png' % label_maps[int(label)]), pred)
+                        #     current_pred = (pred == label).astype(np.uint8) * 255
+                        #     Image.fromarray(current_pred).save(
+                        #         os.path.join(save_path1, '%s.png' % label_maps[int(label)])
+                        #     )
+            if len(merge_tif_filenames) > 0:
+                current_dir = os.getcwd()
+                os.chdir(results_dir)
+                command = r'gdal_merge.py -of GTiff -co "TILED=YES" -co "COMPRESS=LZW" -co "BIGTIFF=YES" -n 0 -o %s ' \
+                          r'%s' % (
+                              os.path.join(tmp_dir, 'merged.tif'),
+                              ' '.join([os.path.basename(name) for name in merge_tif_filenames])
+                          )
+                print(command)
+                # os.system(command)
+                process = subprocess.Popen(command, shell=True)
+                output = process.communicate()[0]
+                os.chdir(current_dir)
+
+                for b, (label, label_name) in enumerate(label_maps.items()):
+                    command = r'gdal_translate -b %d %s %s' % (
+                        b + 1,
+                        os.path.join(tmp_dir, 'merged.tif'),
+                        os.path.join(tmp_dir, '%s.tif' % label_name),
+                    )
+                    print(command)
+                    os.system(command)
+
+                    command = r'gdal_polygonize.py %s -b 1 -f "ESRI Shapefile" %s' % (
+                        os.path.join(tmp_dir, '%s.tif' % label_name),
+                        os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+                    )
+                    print(command)
+                    os.system(command)
+
+                    command = r'ogr2ogr -where "\"DN\"=255" -f "ESRI Shapefile" %s %s' % (
+                        os.path.join(save_path, '%s.shp' % label_name),
+                        os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+                    )
+                    print(command)
+                    os.system(command)
 
 
 def main():
@@ -224,12 +495,28 @@ def main():
         checkpoint = torch.load(join(save_path, args.pth_filename))
         net.load_state_dict(checkpoint['net'])
 
-        save_dir = os.path.join(save_path, args.test_subset, args.pth_filename)
+        save_dir = os.path.join(save_path, args.pth_filename, args.test_subset)
         test(args.test_images_dir, args.test_gts_dir, net, device,
              patch_size=args.img_size,
              save_path=save_dir,
              num_classes=args.num_classes,
              args=args)
+        sys.exit(-1)
+    if args.action == 'do_test_tif':
+        # Load checkpoint
+        print('==> Loading checkpoint...')
+        checkpoint = torch.load(join(save_path, args.pth_filename))
+        net.load_state_dict(checkpoint['net'])
+
+        tiffiles = [
+            'G:\\gddata\\all\\2-WV03-在建杆塔.tif'
+        ]
+        save_dir = os.path.join(save_path, os.path.splitext(os.path.basename(args.pth_filename))[0], args.test_subset)
+        test_tif(tiffiles, net, device,
+                 patch_size=args.img_size,
+                 save_root=save_dir,
+                 num_classes=args.num_classes,
+                 args=args)
         sys.exit(-1)
 
     # torch.nn.init.kaiming_normal(net, mode='fan_out')      # Modify default initialization method
