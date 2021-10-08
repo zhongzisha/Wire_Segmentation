@@ -17,6 +17,7 @@ def parse_args():
     parser.add_argument('--tiled_tifs_dir', default='', type=str)
     parser.add_argument('--test_image_postfix', default='.jpg', type=str)
     parser.add_argument('--test_gts_dir', default='', type=str)
+    parser.add_argument('--min_blob_size', default=50, type=int)
     parser.add_argument('--dataset_type', default='', type=str)
     parser.add_argument('--train_subset', default='train', type=str)
     parser.add_argument('--val_subset', default='val', type=str)
@@ -48,6 +49,8 @@ def parse_args():
                         help='Validation on testset')
     parser.add_argument('--num_workers', default=2, type=int,
                         help='number of workers for data loaders')
+    parser.add_argument('--cached', default=False, type=bool,
+                        help='Use Data Caching')
 
     # for pre_trained checkpoint
     parser.add_argument('--start_epoch', default=1,

@@ -174,7 +174,7 @@ class LineForeignDataset(Dataset):
 class McSegDataset(Dataset):
     def __init__(self, data_root, subset="train",
                  crop_shape=None,
-                 mean=None, std=None):
+                 mean=None, std=None, cached=False):
         self.data_root = data_root
         self.subset = subset
         self.transforms = None
@@ -208,14 +208,32 @@ class McSegDataset(Dataset):
         with open('%s/%s.txt' % (data_root, subset)) as fp:
             self.prefixes = [line.strip() for line in fp.readlines()]
 
+        self.cached = cached
+        if self.cached:
+            print('caching data ...')
+            self.datas, self.masks = {}, {}
+            for idx in range(len(self.prefixes)):
+                data, mask = self.read_data_and_mask(idx)
+                self.datas[idx] = data
+                self.masks[idx] = mask
+        else:
+            self.datas, self.masks = None, None
+
     def __len__(self):
         return len(self.prefixes)
+
+    def read_data_and_mask(self, idx):
+        mask = Image.open('%s/annotations/%s/%s.png' % (self.data_root, self.subset, self.prefixes[idx])).convert('L')
+        data = Image.open('%s/images/%s/%s.jpg' % (self.data_root, self.subset, self.prefixes[idx]))
+        return data, mask
 
     def __getitem__(self, idx):
         # '%s/%s/images/%s.jpg' % (data_root, subset, prefix)
         # '%s/%s/annotations/%s.png' % (data_root, subset, prefix)
-        mask = Image.open('%s/annotations/%s/%s.png' % (self.data_root, self.subset, self.prefixes[idx])).convert('L')
-        data = Image.open('%s/images/%s/%s.jpg' % (self.data_root, self.subset, self.prefixes[idx]))
+        if self.cached:
+            data, mask = self.datas[idx], self.masks[idx]
+        else:
+            data, mask = self.read_data_and_mask(idx)
 
         data = np.array(data, dtype=np.float32) / 255
 
@@ -227,7 +245,6 @@ class McSegDataset(Dataset):
         data = np.transpose(data, [2, 0, 1])
         mask = np.array(mask)[None]
         mask[mask < 255] -= 1
-
         data = torch.from_numpy(data).float()
         mask = torch.from_numpy(mask).long()
 

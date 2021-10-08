@@ -39,9 +39,9 @@ def get_dataloader(args):
     train_set = McSegDataset(data_root=args.data_root,
                              subset=args.train_subset,
                              crop_shape=crop_shape,
-                             mean=mean, std=std)
+                             mean=mean, std=std, cached=args.cached)
     val_set = McSegDataset(data_root=args.data_root, subset=args.val_subset, crop_shape=None,
-                           mean=mean, std=std)
+                           mean=mean, std=std, cached=args.cached)
 
     def worker_init_fn(worker_id):
         random.seed(args.seed + worker_id)
@@ -51,73 +51,6 @@ def get_dataloader(args):
     val_loader = DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=1)
 
     return train_loader, val_loader
-
-
-def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_size=10):
-    ds = gdal.Open(reference_tif, gdal.GA_ReadOnly)
-    print("Driver: {}/{}".format(ds.GetDriver().ShortName,
-                                 ds.GetDriver().LongName))
-    print("Size is {} x {} x {}".format(ds.RasterXSize,
-                                        ds.RasterYSize,
-                                        ds.RasterCount))
-    print("Projection is {}".format(ds.GetProjection()))
-    projection = ds.GetProjection()
-    projection_sr = osr.SpatialReference(wkt=projection)
-    projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
-    geotransform = ds.GetGeoTransform()
-    xOrigin = geotransform[0]
-    yOrigin = geotransform[3]
-    pixelWidth = geotransform[1]
-    pixelHeight = geotransform[5]
-    orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
-    if geotransform:
-        print("Origin = ({}, {})".format(geotransform[0], geotransform[3]))
-        print("Pixel Size = ({}, {})".format(geotransform[1], geotransform[5]))
-        print("IsNorth = ({}, {})".format(geotransform[2], geotransform[4]))
-    ds = None
-
-    driver = gdal.GetDriverByName("GTiff")
-    outdata = driver.Create(save_path, orig_width, orig_height, len(label_maps.keys()), gdal.GDT_Byte)
-    # options=['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
-    # outdata = driver.CreateCopy(save_path, ds, 0, ['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
-    outdata.SetGeoTransform(geotransform)  # sets same geotransform as input
-    outdata.SetProjection(projection)  # sets same projection as input
-
-    for b, (label, label_name) in enumerate(label_maps.items()):
-        print('write image data', b, label, label_name)
-        band = outdata.GetRasterBand(b + 1)
-        mask = (arr == label).astype(np.uint8)
-        mask = cv2.medianBlur(mask, 5)
-
-        # morph operators
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-        # remove small connected blobs
-        # find connected components
-        n_components, output, stats, centroids = cv2.connectedComponentsWithStats(
-            mask, connectivity=8)
-        # remove background class
-        sizes = stats[1:, -1]
-        n_components = n_components - 1
-
-        # remove blobs
-        mask_clean = np.zeros(output.shape, dtype=np.uint8)
-        # for every component in the image, keep it only if it's above min_blob_size
-        for i in range(0, n_components):
-            if sizes[i] >= min_blob_size:
-                mask_clean[output == i + 1] = 255
-
-        # current_pred[current_pred == 0] = no_data_value
-        print(np.min(mask_clean), np.max(mask_clean))
-        band.WriteArray(mask_clean, xoff=0, yoff=0)
-        # band.SetNoDataValue(no_data_value)
-        band.FlushCache()
-        del band
-    outdata.FlushCache()
-    del outdata
-    del driver
 
 
 def test(test_images_dir, test_gts_dir, net,
@@ -249,6 +182,73 @@ def test(test_images_dir, test_gts_dir, net,
     return log
 
 
+def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_size=50):
+    ds = gdal.Open(reference_tif, gdal.GA_ReadOnly)
+    print("Driver: {}/{}".format(ds.GetDriver().ShortName,
+                                 ds.GetDriver().LongName))
+    print("Size is {} x {} x {}".format(ds.RasterXSize,
+                                        ds.RasterYSize,
+                                        ds.RasterCount))
+    print("Projection is {}".format(ds.GetProjection()))
+    projection = ds.GetProjection()
+    projection_sr = osr.SpatialReference(wkt=projection)
+    projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
+    geotransform = ds.GetGeoTransform()
+    xOrigin = geotransform[0]
+    yOrigin = geotransform[3]
+    pixelWidth = geotransform[1]
+    pixelHeight = geotransform[5]
+    orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
+    if geotransform:
+        print("Origin = ({}, {})".format(geotransform[0], geotransform[3]))
+        print("Pixel Size = ({}, {})".format(geotransform[1], geotransform[5]))
+        print("IsNorth = ({}, {})".format(geotransform[2], geotransform[4]))
+    ds = None
+
+    driver = gdal.GetDriverByName("GTiff")
+    outdata = driver.Create(save_path, orig_width, orig_height, len(label_maps.keys()), gdal.GDT_Byte)
+    # options=['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
+    # outdata = driver.CreateCopy(save_path, ds, 0, ['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
+    outdata.SetGeoTransform(geotransform)  # sets same geotransform as input
+    outdata.SetProjection(projection)  # sets same projection as input
+
+    for b, (label, label_name) in enumerate(label_maps.items()):
+        print('write image data', b, label, label_name)
+        band = outdata.GetRasterBand(b + 1)
+        mask = (arr == label).astype(np.uint8)
+        mask = cv2.medianBlur(mask, 5)
+
+        # morph operators
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        # remove small connected blobs
+        # find connected components
+        n_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+            mask, connectivity=8)
+        # remove background class
+        sizes = stats[1:, -1]
+        n_components = n_components - 1
+
+        # remove blobs
+        mask_clean = np.zeros(output.shape, dtype=np.uint8)
+        # for every component in the image, keep it only if it's above min_blob_size
+        for i in range(0, n_components):
+            if sizes[i] >= min_blob_size:
+                mask_clean[output == i + 1] = 255
+
+        # current_pred[current_pred == 0] = no_data_value
+        print(np.min(mask_clean), np.max(mask_clean))
+        band.WriteArray(mask_clean, xoff=0, yoff=0)
+        # band.SetNoDataValue(no_data_value)
+        band.FlushCache()
+        del band
+    outdata.FlushCache()
+    del outdata
+    del driver
+
+
 def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_classes=2, args=None):
     bands_info_txt = "E:\\Downloads\\mc_seg\\tifs\\bands_info.txt"
     invalid_tifs_txt = "E:\\Downloads\\mc_seg\\tifs\\invalid_tifs.txt"
@@ -293,25 +293,19 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
         save_path = os.path.join(save_root, tiffile_prefix)
         if not os.path.exists(save_path):
             os.makedirs(save_path)
+
         # split into small tif files
         if args.tiled_tifs_dir != '':
             test_images_dir = os.path.join(args.tiled_tifs_dir, tiffile_prefix, 'tifs')
-            if not os.path.exists(test_images_dir):
-                os.makedirs(test_images_dir)
-                command = r'gdal_retile.py -of GTiff -ps 2048 2048 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
-                    test_images_dir, tiffile
-                )
-                print(command)
-                os.system(command)
         else:
             test_images_dir = os.path.join(save_path, 'tifs')
-            if not os.path.exists(test_images_dir):
-                os.makedirs(test_images_dir)
-                command = r'gdal_retile.py -of GTiff -ps 2048 2048 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
-                    test_images_dir, tiffile
-                )
-                print(command)
-                os.system(command)
+        if not os.path.exists(test_images_dir):
+            os.makedirs(test_images_dir)
+            command = r'gdal_retile.py -of GTiff -ps 2048 2048 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
+                test_images_dir, tiffile
+            )
+            print(command)
+            os.system(command)
 
         results_dir = os.path.join(save_path, 'results')
         if not os.path.exists(results_dir):
@@ -401,7 +395,7 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                         Image.fromarray(final_img).save(os.path.join(results_dir, file_prefix + '.png'))
 
                         # save_tif_filename = os.path.join(save_path, file_prefix + args.test_image_postfix)
-                        save_numpy_array_to_tif(pred, img_filename, label_maps, save_tif_filename)
+                        save_numpy_array_to_tif(pred, img_filename, label_maps, save_tif_filename, args.min_blob_size)
                         merge_tif_filenames.append(save_tif_filename)
                         # save_path1 = os.path.join(save_path, file_prefix)
                         # if not os.path.exists(save_path1):
@@ -427,7 +421,7 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                 os.chdir(current_dir)
 
                 for b, (label, label_name) in enumerate(label_maps.items()):
-                    command = r'gdal_translate -b %d %s %s' % (
+                    command = r'gdal_translate -of GTiff -co "TILED=YES" -co "COMPRESS=LZW" -co "BIGTIFF=YES" -b %d %s %s' % (
                         b + 1,
                         os.path.join(tmp_dir, 'merged.tif'),
                         os.path.join(tmp_dir, '%s.tif' % label_name),
