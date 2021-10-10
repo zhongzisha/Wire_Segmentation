@@ -14,6 +14,7 @@ def parse_args():
     parser.add_argument('--data_root', default='', type=str)
     parser.add_argument('--action', default='', type=str)
     parser.add_argument('--test_images_dir', default='', type=str)
+    parser.add_argument('--test_tifs_dir', default='', type=str, help='directory that contains multiple .tif files')
     parser.add_argument('--tiled_tifs_dir', default='', type=str)
     parser.add_argument('--test_image_postfix', default='.jpg', type=str)
     parser.add_argument('--test_gts_dir', default='', type=str)

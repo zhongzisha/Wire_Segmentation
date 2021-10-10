@@ -1,4 +1,4 @@
-import sys, os
+import sys, os, glob, shutil
 
 import cv2
 import torch.backends.cudnn as cudnn
@@ -294,6 +294,11 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
         if not os.path.exists(save_path):
             os.makedirs(save_path)
 
+        shp_exists = [os.path.exists(os.path.join(save_path, label_name + '.shp'))
+                  for label, label_name in label_maps.items()]
+        if np.all(shp_exists):
+            continue
+
         # split into small tif files
         if args.tiled_tifs_dir != '':
             test_images_dir = os.path.join(args.tiled_tifs_dir, tiffile_prefix, 'tifs')
@@ -326,60 +331,67 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                         continue
                     # image_np = cv2.imread(img_filename).astype(np.float32)[:,:,::-1] / 255  # bgr -> rgb
                     image_np = np.array(Image.open(img_filename)).astype(np.float32) / 255
+                    all_zero_im = np.sum(image_np, axis=2)
+                    hh, ww = image_np.shape[:2]
+                    if len(np.unique(image_np)) == 1:
+                        pred = np.zeros((hh, ww), dtype=np.uint8)
+                    else:
+                        if tiffile_prefix in bands_info:
+                            image_np = image_np[:, :, ::-1]
 
-                    if tiffile_prefix in bands_info:
-                        image_np = image_np[:, :, ::-1]
+                        image = image_np.copy()
+                        if mean is not None:
+                            image -= np.array(mean)
+                        if std is not None:
+                            image /= np.array(std)
+                        image = np.transpose(image, [2, 0, 1])
 
-                    image = image_np.copy()
-                    if mean is not None:
-                        image -= np.array(mean)
-                    if std is not None:
-                        image /= np.array(std)
-                    image = np.transpose(image, [2, 0, 1])
+                        image = torch.from_numpy(image).unsqueeze(0).to(device)  # 1CHW
+                        h_stride, w_stride = patch_size // 2, patch_size // 2
+                        h_crop, w_crop = patch_size, patch_size
+                        batch_size, _, h_img, w_img = image.size()
+                        h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
+                        w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
+                        preds = image.new_zeros((batch_size, num_classes, h_img, w_img))
+                        count_mat = image.new_zeros((batch_size, 1, h_img, w_img))
+                        for h_idx in range(h_grids):
+                            for w_idx in range(w_grids):
+                                y1 = h_idx * h_stride
+                                x1 = w_idx * w_stride
+                                y2 = min(y1 + h_crop, h_img)
+                                x2 = min(x1 + w_crop, w_img)
+                                y1 = max(y2 - h_crop, 0)
+                                x1 = max(x2 - w_crop, 0)
+                                print(h_idx, w_idx, y1, y2, x1, x2)
+                                crop_img = image[:, :, y1:y2, x1:x2]
+                                crop_img_h, crop_img_w = crop_img.shape[2:]
+                                if crop_img.shape[2:] != (patch_size, patch_size):
+                                    crop_img = F.pad(crop_img, (0, int(patch_size - crop_img.shape[3]),
+                                                                0, int(patch_size - crop_img.shape[2])))
+                                crop_seg_logit = net(crop_img)
+                                preds += F.pad(crop_seg_logit[:, :, :crop_img_h, :crop_img_w],
+                                               (int(x1), int(preds.shape[3] - x2), int(y1),
+                                                int(preds.shape[2] - y2)))
 
-                    image = torch.from_numpy(image).unsqueeze(0).to(device)  # 1CHW
-                    h_stride, w_stride = patch_size // 2, patch_size // 2
-                    h_crop, w_crop = patch_size, patch_size
-                    batch_size, _, h_img, w_img = image.size()
-                    h_grids = max(h_img - h_crop + h_stride - 1, 0) // h_stride + 1
-                    w_grids = max(w_img - w_crop + w_stride - 1, 0) // w_stride + 1
-                    preds = image.new_zeros((batch_size, num_classes, h_img, w_img))
-                    count_mat = image.new_zeros((batch_size, 1, h_img, w_img))
-                    for h_idx in range(h_grids):
-                        for w_idx in range(w_grids):
-                            y1 = h_idx * h_stride
-                            x1 = w_idx * w_stride
-                            y2 = min(y1 + h_crop, h_img)
-                            x2 = min(x1 + w_crop, w_img)
-                            y1 = max(y2 - h_crop, 0)
-                            x1 = max(x2 - w_crop, 0)
-                            print(h_idx, w_idx, y1, y2, x1, x2)
-                            crop_img = image[:, :, y1:y2, x1:x2]
-                            crop_img_h, crop_img_w = crop_img.shape[2:]
-                            if crop_img.shape[2:] != (patch_size, patch_size):
-                                crop_img = F.pad(crop_img, (0, int(patch_size - crop_img.shape[3]),
-                                                            0, int(patch_size - crop_img.shape[2])))
-                            crop_seg_logit = net(crop_img)
-                            preds += F.pad(crop_seg_logit[:, :, :crop_img_h, :crop_img_w],
-                                           (int(x1), int(preds.shape[3] - x2), int(y1),
-                                            int(preds.shape[2] - y2)))
+                                count_mat[:, :, y1:y2, x1:x2] += 1
+                        assert (count_mat == 0).sum() == 0
+                        if torch.onnx.is_in_onnx_export():
+                            # cast count_mat to constant while exporting to ONNX
+                            count_mat = torch.from_numpy(
+                                count_mat.cpu().detach().numpy()).to(device=image.device)
+                        preds = preds / count_mat
+                        preds = torch.softmax(preds, dim=1)
 
-                            count_mat[:, :, y1:y2, x1:x2] += 1
-                    assert (count_mat == 0).sum() == 0
-                    if torch.onnx.is_in_onnx_export():
-                        # cast count_mat to constant while exporting to ONNX
-                        count_mat = torch.from_numpy(
-                            count_mat.cpu().detach().numpy()).to(device=image.device)
-                    preds = preds / count_mat
-                    preds = torch.softmax(preds, dim=1)
+                        outputs = preds.data.cpu().numpy()
+                        pred = np.argmax(outputs, axis=1)[0] + 1
 
-                    outputs = preds.data.cpu().numpy()
-                    pred = np.argmax(outputs, axis=1)[0] + 1
+                    pred[all_zero_im == 0] = 0
+                    pred[all_zero_im == 3] = 0
                     pred_color = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
                     for label, color in enumerate(palette):
                         pred_color[pred == label, :] = color
 
-                    gt = np.zeros((h_img, w_img), dtype=np.uint8)
+                    gt = np.zeros((pred.shape[0], pred.shape[1]), dtype=np.uint8)
                     gt_color = np.zeros((gt.shape[0], gt.shape[1], 3), dtype=np.uint8)
                     for label, color in enumerate(palette):
                         gt_color[gt == label, :] = color
@@ -411,7 +423,7 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                 os.chdir(results_dir)
                 command = r'gdal_merge.py -of GTiff -co "TILED=YES" -co "COMPRESS=LZW" -co "BIGTIFF=YES" -n 0 -o %s ' \
                           r'%s' % (
-                              os.path.join(tmp_dir, 'merged.tif'),
+                              os.path.join(save_path, 'merged.tif'),
                               ' '.join([os.path.basename(name) for name in merge_tif_filenames])
                           )
                 print(command)
@@ -423,14 +435,14 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                 for b, (label, label_name) in enumerate(label_maps.items()):
                     command = r'gdal_translate -of GTiff -co "TILED=YES" -co "COMPRESS=LZW" -co "BIGTIFF=YES" -b %d %s %s' % (
                         b + 1,
-                        os.path.join(tmp_dir, 'merged.tif'),
-                        os.path.join(tmp_dir, '%s.tif' % label_name),
+                        os.path.join(save_path, 'merged.tif'),
+                        os.path.join(save_path, '%s.tif' % label_name),
                     )
                     print(command)
                     os.system(command)
 
                     command = r'gdal_polygonize.py %s -b 1 -f "ESRI Shapefile" %s' % (
-                        os.path.join(tmp_dir, '%s.tif' % label_name),
+                        os.path.join(save_path, '%s.tif' % label_name),
                         os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
                     )
                     print(command)
@@ -442,6 +454,11 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                     )
                     print(command)
                     os.system(command)
+
+        if os.path.exists(results_dir):
+            shutil.rmtree(results_dir, ignore_errors=True)
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def main():
@@ -503,8 +520,19 @@ def main():
         net.load_state_dict(checkpoint['net'])
 
         tiffiles = [
-            'G:\\gddata\\all\\2-WV03-在建杆塔.tif'
+            # 'G:\\gddata\\all\\2-WV03-在建杆塔.tif',
+            'G:\\gddata\\all\\3-wv02-在建杆塔.tif',
+            'G:\\gddata\\all\\110kv江桂线N41-N42（含杆塔、导线、绝缘子、树木）.tif',
+            'G:\\gddata\\all\\220kvqinshunxiann39-n42.tif',
+            'G:\\gddata\\all\\220kvqinshunxiann53-n541.tif',
+            'G:\\gddata\\all\\220kvqinshunxiann70-n71.tif',
+            'G:\\gddata\\all\\po008535_gd33.tif',
+            'G:\\gddata\\all\\WV03-曲花甲线-20170510.tif',
+            'G:\\gddata\\all\\WV03-英连线-20170206.tif',
+            'G:\\gddata\\all\\候村250m_mosaic.tif',
         ]
+        # tiffiles = glob.glob(os.path.join(args.test_tifs_dir, '*.tif'))
+
         save_dir = os.path.join(save_path, os.path.splitext(os.path.basename(args.pth_filename))[0], args.test_subset)
         test_tif(tiffiles, net, device,
                  patch_size=args.img_size,

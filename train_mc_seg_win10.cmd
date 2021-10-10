@@ -10,7 +10,7 @@ set NETWORK=U_Net
 set DATA_ROOT=E:/Downloads/mc_seg/data_using_shp_multi_random200
 set OUTF=E:/Downloads/mc_seg/logs
 set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%
-set TILED_TIFS_DIR=E:/Downloads/mc_seg/tiled_tifs
+set TILED_TIFS_DIR=G:/gddata/tiled_tifs
 set ACTION=%1%
 set EPOCH=%2%
 
@@ -90,7 +90,8 @@ python train_mc_seg.py ^
 --img_size %IMG_SIZE% ^
 --action do_test_tif ^
 --pth_filename epoch-%EPOCH%.pth ^
---tiled_tifs_dir %TILED_TIFS_DIR%
+--tiled_tifs_dir %TILED_TIFS_DIR% ^
+--test_tifs_dir G:/gddata/all
 
 ) else (
 echo "no, what's that?"
