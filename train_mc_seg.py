@@ -497,8 +497,9 @@ def main():
         sys.exit(-1)
     print("Total number of parameters: " + str(count_parameters(net)))
 
-    log.save_graph(net, torch.randn((1, 3, 512, 512)).to(device).to(
-        device=device))  # Save the model structure to the tensorboard file
+    if args.action == 'train':
+        log.save_graph(net, torch.randn((1, 3, 512, 512)).to(device).to(
+            device=device))  # Save the model structure to the tensorboard file
 
     if args.action == 'do_test':
         # Load checkpoint
@@ -529,7 +530,7 @@ def main():
             'G:\\gddata\\all\\po008535_gd33.tif',
             'G:\\gddata\\all\\WV03-曲花甲线-20170510.tif',
             'G:\\gddata\\all\\WV03-英连线-20170206.tif',
-            'G:\\gddata\\all\\候村250m_mosaic.tif',
+            # 'G:\\gddata\\all\\候村250m_mosaic.tif',
         ]
         # tiffiles = glob.glob(os.path.join(args.test_tifs_dir, '*.tif'))
 

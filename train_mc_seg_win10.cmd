@@ -1,12 +1,12 @@
 echo "training ..."
 chcp 65001
 set LR=0.0001
-@REM set LR=0.001
+set LR=0.001
 set BS=4
-@REM set BS=8
+set BS=8
 set IMG_SIZE=512
 set NETWORK=U_Net
-@REM set NETWORK=SMP_UnetPlusPlus
+set NETWORK=SMP_UnetPlusPlus
 set DATA_ROOT=E:/Downloads/mc_seg/data_using_shp_multi_random200
 set OUTF=E:/Downloads/mc_seg/logs
 set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%
