@@ -18,6 +18,7 @@ import models
 import segmentation_models_pytorch as smp
 from osgeo import gdal, osr, ogr
 import subprocess
+import gc
 
 
 def CE_loss(input_logits, target_targets, ignore_index, temperature=1):
@@ -295,7 +296,7 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
             os.makedirs(save_path)
 
         shp_exists = [os.path.exists(os.path.join(save_path, label_name + '.shp'))
-                  for label, label_name in label_maps.items()]
+                      for label, label_name in label_maps.items()]
         if np.all(shp_exists):
             continue
 
@@ -306,7 +307,7 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
             test_images_dir = os.path.join(save_path, 'tifs')
         if not os.path.exists(test_images_dir):
             os.makedirs(test_images_dir)
-            command = r'gdal_retile.py -of GTiff -ps 2048 2048 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
+            command = r'gdal_retile.py -of GTiff -ps 5120 5120 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
                 test_images_dir, tiffile
             )
             print(command)
@@ -384,6 +385,8 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
 
                         outputs = preds.data.cpu().numpy()
                         pred = np.argmax(outputs, axis=1)[0] + 1
+                        del preds, outputs, count_mat, image
+                        gc.collect()
 
                     pred[all_zero_im == 0] = 0
                     pred[all_zero_im == 3] = 0
@@ -461,9 +464,132 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
             shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+def merge_mc_seg_results(args=None):
+    tiffiles = [
+        # 'G:\\gddata\\all\\2-WV03-在建杆塔.tif',
+        'G:\\gddata\\all\\3-wv02-在建杆塔.tif',
+        'G:\\gddata\\all\\110kv江桂线N41-N42（含杆塔、导线、绝缘子、树木）.tif',
+        'G:\\gddata\\all\\220kvqinshunxiann39-n42.tif',
+        'G:\\gddata\\all\\220kvqinshunxiann53-n541.tif',
+        'G:\\gddata\\all\\220kvqinshunxiann70-n71.tif',
+        'G:\\gddata\\all\\po008535_gd33.tif',
+        'G:\\gddata\\all\\WV03-曲花甲线-20170510.tif',
+        'G:\\gddata\\all\\WV03-英连线-20170206.tif',
+        # 'G:\\gddata\\all\\候村250m_mosaic.tif',
+    ]
+    # tiffiles = glob.glob(os.path.join(args.test_tifs_dir, '*.tif'))
+    epochs = [20, 30, 40, 50]
+    log_roots = [
+        r'E:\Downloads\mc_seg\logs\U_Net_512_4_0.0001',
+        r'E:\Downloads\mc_seg\logs\SMP_UnetPlusPlus_512_8_0.001',
+    ]
+    palette = np.array([[0, 0, 0], [255, 0, 0], [0, 0, 255], [0, 255, 0], [255, 255, 255]])
+    # 'landslide', 'water', 'tree', 'building'
+    label_maps = {
+        1: 'landslide',
+        2: 'water',
+        3: 'tree',
+        4: 'building',
+    }
+
+    save_root = r'E:\Downloads\mc_seg\logs\merged_results'
+
+    all_tiffiles = []
+    for tiffile in tiffiles:
+        all_tiffiles += tiffile.split(',')
+
+    for tiffile in all_tiffiles:
+        tiffile_prefix = tiffile.split(os.sep)[-1].replace('.tif', '')
+
+        save_path = os.path.join(save_root, tiffile_prefix)
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+        tmp_dir = os.path.join(save_root, tiffile_prefix, 'tmp')
+        if not os.path.exists(tmp_dir):
+            os.makedirs(tmp_dir)
+
+        shp_exists = [os.path.exists(os.path.join(save_path, label_name + '.shp'))
+                      for label, label_name in label_maps.items()]
+        if np.all(shp_exists):
+            continue
+
+        ds = gdal.Open(tiffile, gdal.GA_ReadOnly)
+        print("Driver: {}/{}".format(ds.GetDriver().ShortName,
+                                     ds.GetDriver().LongName))
+        print("Size is {} x {} x {}".format(ds.RasterXSize,
+                                            ds.RasterYSize,
+                                            ds.RasterCount))
+        print("Projection is {}".format(ds.GetProjection()))
+        projection = ds.GetProjection()
+        projection_sr = osr.SpatialReference(wkt=projection)
+        projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
+        geotransform = ds.GetGeoTransform()
+        xOrigin = geotransform[0]
+        yOrigin = geotransform[3]
+        pixelWidth = geotransform[1]
+        pixelHeight = geotransform[5]
+        orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
+        if geotransform:
+            print("Origin = ({}, {})".format(geotransform[0], geotransform[3]))
+            print("Pixel Size = ({}, {})".format(geotransform[1], geotransform[5]))
+            print("IsNorth = ({}, {})".format(geotransform[2], geotransform[4]))
+        ds = None
+
+        merged_tif_filename = os.path.join(save_path, 'merged.tif')
+        if not os.path.exists(merged_tif_filename):
+            img = np.zeros((orig_height, orig_width, 4), dtype=np.uint8)  # RGB format
+            for log_root in log_roots:
+                for epoch in epochs:
+                    result_tif_filename = os.path.join(
+                        log_root, 'epoch-%d' % epoch, 'test_tif', tiffile_prefix, 'merged.tif'
+                    )
+                    if not os.path.exists(result_tif_filename):
+                        continue
+                    print(result_tif_filename)
+                    ds = gdal.Open(result_tif_filename, gdal.GA_ReadOnly)
+                    for b in range(4):
+                        band = ds.GetRasterBand(b + 1)
+                        img[:, :, b] += \
+                            (band.ReadAsArray(0, 0, win_xsize=orig_width, win_ysize=orig_height) > 0).astype(np.uint8)
+                    ds = None
+            print('get pred', np.unique(img))
+            pred = np.argmax(img, axis=2) + 1
+            save_numpy_array_to_tif(pred, tiffile, label_maps, merged_tif_filename, args.min_blob_size)
+            del img, pred
+
+        for b, (label, label_name) in enumerate(label_maps.items()):
+            command = r'gdal_translate -of GTiff -co "TILED=YES" -co "COMPRESS=LZW" -co "BIGTIFF=YES" -b %d %s %s' % (
+                b + 1,
+                merged_tif_filename,
+                os.path.join(save_path, '%s.tif' % label_name),
+            )
+            print(command)
+            os.system(command)
+
+            command = r'gdal_polygonize.py %s -b 1 -f "ESRI Shapefile" %s' % (
+                os.path.join(save_path, '%s.tif' % label_name),
+                os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+            )
+            print(command)
+            os.system(command)
+
+            command = r'ogr2ogr -where "\"DN\"=255" -f "ESRI Shapefile" %s %s' % (
+                os.path.join(save_path, '%s.shp' % label_name),
+                os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+            )
+            print(command)
+            os.system(command)
+        # break
+
+
 def main():
     setpu_seed(2021)
     args = parse_args()
+
+    if args.action == 'merge_results':
+        merge_mc_seg_results(args)
+        sys.exit(-1)
+
     save_path = join(args.outf, args.save)
     save_args(args, save_path)
 
