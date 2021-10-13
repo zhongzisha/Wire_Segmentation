@@ -1,6 +1,7 @@
 import sys, os, glob, shutil
 
 import cv2
+import numpy as np
 import torch.backends.cudnn as cudnn
 import torch.optim as optim
 import torch.nn.functional as F
@@ -19,6 +20,7 @@ import segmentation_models_pytorch as smp
 from osgeo import gdal, osr, ogr
 import subprocess
 import gc
+import math
 
 
 def CE_loss(input_logits, target_targets, ignore_index, temperature=1):
@@ -183,7 +185,66 @@ def test(test_images_dir, test_gts_dir, net,
     return log
 
 
-def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_size=50):
+def line_detection(src, xoffset=0, yoffset=0, is_draw=True, save_path=None):
+    # im is a HxW grayscale image
+    # lines is [xmin, ymin, xmax, ymax, label] matrix
+    lines = []
+
+    # cdst = cv2.cvtColor(src, cv2.COLOR_GRAY2BGR)
+    cdst = np.stack([src, src, src], axis=-1)
+    cdstP = np.copy(cdst)
+    # lines = cv2.HoughLines(src, 1, np.pi / 180, 150, None, 0, 0)
+    # if lines is not None:
+    #     for i in range(0, len(lines)):
+    #         rho = lines[i][0][0]
+    #         theta = lines[i][0][1]
+    #         a = math.cos(theta)
+    #         b = math.sin(theta)
+    #         x0 = a * rho
+    #         y0 = b * rho
+    #         pt1 = (int(x0 + 1000 * (-b)), int(y0 + 1000 * a))
+    #         pt2 = (int(x0 - 1000 * (-b)), int(y0 - 1000 * a))
+    #         cv2.line(cdst, pt1, pt2, (255, 255, 255), 3, cv2.LINE_AA)
+
+    linesP = cv2.HoughLinesP(src, 1, np.pi / 180, 200, None, 50, 10)
+
+    radians = []
+    dists = []
+    if linesP is not None:
+        # for i in range(len(linesP)):
+        #     x1, y1, x2, y2 = linesP[i][0]
+        #     r = np.arctan((y1 - y2) / (x2 - x1 + 1e-10))
+        #     dist = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+        #     radians.append(r)
+        #     dists.append(dist)
+        #
+        # print('radians', radians)
+        # print('dists', dists)
+        # radian_hist, radian_bin_edges = np.histogram(radians, bins=np.arange(-np.pi / 2, np.pi / 2, 5 * np.pi / 180))
+        # print('radian_hist', radian_hist)
+        # print('radian_bin_edges', radian_bin_edges)
+        # max_hist = np.argmax(radian_hist)
+        # max_radian = radian_bin_edges[max_hist]
+        # print('max_hist', max_hist)
+        # print('max_radian', max_radian)
+
+        for i in range(0, len(linesP)):
+            x1, y1, x2, y2 = linesP[i][0]
+
+            dis = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+            print(dis, np.degrees(np.arctan((y1-y2)/(x1-x2))))
+            if dis < 100:
+                continue
+
+            cv2.line(cdstP, (x1, y1), (x2, y2), (255, 255, 0), 3, cv2.LINE_AA)
+            lines.append([x1 + xoffset, y1 + yoffset,
+                          x2 + xoffset, y2 + yoffset])
+
+    return cdstP, lines
+
+
+def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_size=50,
+                            tiled_width=5120, tiled_height=5120, tiled_overlap=64):
     ds = gdal.Open(reference_tif, gdal.GA_ReadOnly)
     print("Driver: {}/{}".format(ds.GetDriver().ShortName,
                                  ds.GetDriver().LongName))
@@ -213,35 +274,61 @@ def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_
     outdata.SetGeoTransform(geotransform)  # sets same geotransform as input
     outdata.SetProjection(projection)  # sets same projection as input
 
+    all_lines = []
     for b, (label, label_name) in enumerate(label_maps.items()):
         print('write image data', b, label, label_name)
         band = outdata.GetRasterBand(b + 1)
         mask = (arr == label).astype(np.uint8)
-        mask = cv2.medianBlur(mask, 5)
 
-        # morph operators
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        if label_name == 'line':
+            yoffset, xoffset = [int(float(val)) for val in save_path.replace('.tif', '').split('_')[-2:]]
+            xoffset = int((tiled_width - tiled_overlap) * (xoffset - 1))
+            yoffset = int((tiled_height - tiled_overlap) * (yoffset - 1))
+            print(save_path, xoffset, yoffset)
 
-        # remove small connected blobs
-        # find connected components
-        n_components, output, stats, centroids = cv2.connectedComponentsWithStats(
-            mask, connectivity=8)
-        # remove background class
-        sizes = stats[1:, -1]
-        n_components = n_components - 1
+            if np.any(mask):
+                # morph operators
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+                mask = cv2.morphologyEx(mask, cv2.MORPH_DILATE, kernel)
 
-        # remove blobs
-        mask_clean = np.zeros(output.shape, dtype=np.uint8)
-        # for every component in the image, keep it only if it's above min_blob_size
-        for i in range(0, n_components):
-            if sizes[i] >= min_blob_size:
-                mask_clean[output == i + 1] = 255
+                mask, lines = line_detection(mask.copy() * 255, xoffset, yoffset, save_path=save_path)  # do line detection  lines:[x1,y1,x2,y2]
+                all_lines += lines
 
-        # current_pred[current_pred == 0] = no_data_value
-        print(np.min(mask_clean), np.max(mask_clean))
-        band.WriteArray(mask_clean, xoff=0, yoff=0)
+                # if len(result.shape) == 3:
+                #     final_mask2[y:y2, x:x2] = result[:, :, 0]
+                # else:
+                #     final_mask2[y:y2, x:x2] = result
+            if len(mask.shape) == 3:
+                band.WriteArray(mask[:, :, 0], xoff=0, yoff=0)
+            else:
+                band.WriteArray(mask, xoff=0, yoff=0)
+        else:
+            mask = cv2.medianBlur(mask, 5)
+
+            # morph operators
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+            # remove small connected blobs
+            # find connected components
+            n_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+                mask, connectivity=8)
+            # remove background class
+            sizes = stats[1:, -1]
+            n_components = n_components - 1
+
+            # remove blobs
+            mask_clean = np.zeros(output.shape, dtype=np.uint8)
+            # for every component in the image, keep it only if it's above min_blob_size
+            for i in range(0, n_components):
+                if sizes[i] >= min_blob_size:
+                    mask_clean[output == i + 1] = 255
+
+            # current_pred[current_pred == 0] = no_data_value
+            print(np.min(mask_clean), np.max(mask_clean))
+            band.WriteArray(mask_clean, xoff=0, yoff=0)
+
         # band.SetNoDataValue(no_data_value)
         band.FlushCache()
         del band
@@ -249,8 +336,155 @@ def save_numpy_array_to_tif(arr, reference_tif, label_maps, save_path, min_blob_
     del outdata
     del driver
 
+    return all_lines
 
-def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_classes=2, args=None):
+
+# numpy array to envi shapefile using gdal
+def save_predictions_to_envi_xml_and_shp(preds, save_xml_filename, gdal_proj_info, gdal_trans_info,
+                                         names=None, colors=None, is_line=False, spatialreference=None,
+                                         is_save_xml=True, save_shp_filename=None):
+    if names is None:
+        names = {0: 'tower', 1: 'insulator'}
+    if colors is None:
+        colors = {0: [255, 0, 0], 1: [0, 0, 255]}
+
+    # print('names', names)
+    # print('colors', colors)
+    # print('spatialreference', spatialreference)
+    # print('gdal_proj_info', gdal_proj_info)
+    # print('gdal_trans_info', gdal_trans_info)
+
+    def get_coords(xmin, ymin, xmax, ymax):
+        # [xmin, ymin]
+        x1 = gdal_trans_info[0] + (xmin + 0.5) * gdal_trans_info[1] + (ymin + 0.5) * gdal_trans_info[2]
+        y1 = gdal_trans_info[3] + (xmin + 0.5) * gdal_trans_info[4] + (ymin + 0.5) * gdal_trans_info[5]
+
+        # [xmax, ymax]
+        x3 = gdal_trans_info[0] + (xmax + 0.5) * gdal_trans_info[1] + (ymax + 0.5) * gdal_trans_info[2]
+        y3 = gdal_trans_info[3] + (xmax + 0.5) * gdal_trans_info[4] + (ymax + 0.5) * gdal_trans_info[5]
+
+        if is_line:
+            return [x1, y1, x3, y3]
+        else:
+            # [xmax, ymin]
+            x2 = gdal_trans_info[0] + (xmax + 0.5) * gdal_trans_info[1] + (ymin + 0.5) * gdal_trans_info[2]
+            y2 = gdal_trans_info[3] + (xmax + 0.5) * gdal_trans_info[4] + (ymin + 0.5) * gdal_trans_info[5]
+            # [xmin, ymax]
+            x4 = gdal_trans_info[0] + (xmin + 0.5) * gdal_trans_info[1] + (ymax + 0.5) * gdal_trans_info[2]
+            y4 = gdal_trans_info[3] + (xmin + 0.5) * gdal_trans_info[4] + (ymax + 0.5) * gdal_trans_info[5]
+
+            return [x1, y1, x2, y2, x3, y3, x4, y4, x1, y1]
+
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>\n<RegionsOfInterest version="1.0">\n']
+    # names = {0: '1', 1: '2'}
+    # create output file
+    # save_path = os.path.dirname(os.path.abspath(save_xml_filename))
+    # print('save_path', save_path)
+    # file_prefix = save_xml_filename.split(os.sep)[-1].replace('.xml', '')
+    # print('file_prefix', file_prefix)
+    outDriver = ogr.GetDriverByName('ESRI Shapefile')
+    # shp_save_dir = os.path.join(save_path, file_prefix)
+    # # print('shp_save_dir', shp_save_dir)
+    # # if os.path.exists(shp_save_dir):
+    # #     shutil.rmtree(shp_save_dir, ignore_errors=True)
+    # # os.makedirs(shp_save_dir)
+    # if not os.path.exists(shp_save_dir):
+    #     os.makedirs(shp_save_dir)
+
+    is_gt = False
+    if len(preds) > 0:
+        is_gt = len(preds[0]) == 5
+
+    scores = []
+
+    outDataSource = outDriver.CreateDataSource(save_shp_filename)
+    for current_label, label_name in names.items():
+        # print(current_label, label_name, colors[current_label])
+        # save_shp_filename = os.path.join(shp_save_dir, label_name + '.shp')
+        # if os.path.exists(save_shp_filename):
+        #     os.remove(save_shp_filename)
+
+        if is_line:
+            outLayer = outDataSource.CreateLayer(label_name, spatialreference, geom_type=ogr.wkbLineString)
+        else:
+            outLayer = outDataSource.CreateLayer(label_name, spatialreference, geom_type=ogr.wkbPolygon)
+        featureDefn = outLayer.GetLayerDefn()
+
+        lines1 = [
+            '<Region name="%s" color="%s">\n' % (label_name, ','.join([str(val) for val in colors[current_label]])),
+            '<GeometryDef>\n<CoordSysStr>%s</CoordSysStr>\n' % (
+                gdal_proj_info if gdal_proj_info != '' else 'none')]  # 这里不能有换行符
+
+        count = 0
+        for i, pred in enumerate(preds):
+            if is_gt:
+                xmin, ymin, xmax, ymax, label = pred
+                score = 0.999
+                label = int(label) - 1  # label==0: 杆塔, label==1: 绝缘子
+            else:
+                xmin, ymin, xmax, ymax, score, label = pred
+                label = int(label)  # label==0: 杆塔, label==1: 绝缘子
+
+            if label == current_label:
+                coords = get_coords(xmin, ymin, xmax, ymax)
+
+                if is_line:
+                    lines1.append('<LineString>\n<Coordinates>\n')
+                    lines1.append('%s\n' % (" ".join(['%.6f' % val for val in coords])))
+                    lines1.append('</Coordinates>\n</LineString>\n')
+
+                    coords = np.array(coords).reshape((-1, 2)).astype(np.float64)
+                    if gdal_proj_info is None:
+                        coords *= 0.013888889
+
+                    poly = ogr.Geometry(ogr.wkbLineString)
+                    for xx, yy in coords:
+                        poly.AddPoint(xx, yy)
+
+                else:
+                    lines1.append('<Polygon>\n<Exterior>\n<LinearRing>\n<Coordinates>\n')
+                    lines1.append('%s\n' % (" ".join(['%.6f' % val for val in coords])))
+                    lines1.append('</Coordinates>\n</LinearRing>\n</Exterior>\n</Polygon>\n')
+
+                    coords = np.array(coords).reshape((-1, 2)).astype(np.float64)
+                    if gdal_proj_info is None:
+                        coords *= 0.013888889
+
+                    ring = ogr.Geometry(ogr.wkbLinearRing)
+                    for xx, yy in coords:
+                        ring.AddPoint(xx, yy)
+                    poly = ogr.Geometry(ogr.wkbPolygon)
+                    poly.AddGeometry(ring)
+
+                # add new geom to layer
+                outFeature = ogr.Feature(featureDefn)
+                outFeature.SetGeometry(poly)
+                outLayer.CreateFeature(outFeature)
+                outFeature = None
+
+                scores.append(score)
+                count += 1
+        lines1.append('</GeometryDef>\n</Region>\n')
+
+        if count > 0:
+            lines.append(''.join(lines1))
+
+        featureDefn = None
+        outLayer = None
+    outDataSource = None
+
+    lines.append('</RegionsOfInterest>\n')
+
+    # if len(lines) > 0 and is_save_xml:
+    #     with open(save_xml_filename, 'w') as fp:
+    #         fp.writelines(lines)
+    #     np.savetxt(save_xml_filename.replace('.xml', '_scores.txt'),
+    #                np.array(scores, dtype=np.float32),
+    #                fmt='%.6f', delimiter=',', encoding='utf-8')
+
+
+def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_classes=2, args=None,
+             label_maps=None, tiled_width=5120, tiled_height=5120, tiled_overlap=64):
     bands_info_txt = "E:\\Downloads\\mc_seg\\tifs\\bands_info.txt"
     invalid_tifs_txt = "E:\\Downloads\\mc_seg\\tifs\\invalid_tifs.txt"
     bands_info = []
@@ -274,12 +508,12 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
         mean, std = None, None
     palette = np.array([[0, 0, 0], [255, 0, 0], [0, 0, 255], [0, 255, 0], [255, 255, 255]])
     # 'landslide', 'water', 'tree', 'building'
-    label_maps = {
-        1: 'landslide',
-        2: 'water',
-        3: 'tree',
-        4: 'building',
-    }
+    # label_maps = {
+    #     1: 'landslide',
+    #     2: 'water',
+    #     3: 'tree',
+    #     4: 'building',
+    # }
     net.eval()
 
     all_tiffiles = []
@@ -300,6 +534,24 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
         if np.all(shp_exists):
             continue
 
+        ds = gdal.Open(tiffile, gdal.GA_ReadOnly)
+        print("Driver: {}/{}".format(ds.GetDriver().ShortName,
+                                     ds.GetDriver().LongName))
+        print("Size is {} x {} x {}".format(ds.RasterXSize,
+                                            ds.RasterYSize,
+                                            ds.RasterCount))
+        print("Projection is {}".format(ds.GetProjection()))
+        projection = ds.GetProjection()
+        projection_sr = osr.SpatialReference(wkt=projection)
+        projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
+        geotransform = ds.GetGeoTransform()
+        xOrigin = geotransform[0]
+        yOrigin = geotransform[3]
+        pixelWidth = geotransform[1]
+        pixelHeight = geotransform[5]
+        orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
+        ds = None
+
         # split into small tif files
         if args.tiled_tifs_dir != '':
             test_images_dir = os.path.join(args.tiled_tifs_dir, tiffile_prefix, 'tifs')
@@ -307,8 +559,8 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
             test_images_dir = os.path.join(save_path, 'tifs')
         if not os.path.exists(test_images_dir):
             os.makedirs(test_images_dir)
-            command = r'gdal_retile.py -of GTiff -ps 5120 5120 -overlap 64 -ot Byte -r cubic -targetDir %s %s' % (
-                test_images_dir, tiffile
+            command = r'gdal_retile.py -of GTiff -ps %d %d -overlap %d -ot Byte -r cubic -targetDir %s %s' % (
+                tiled_width, tiled_height, tiled_overlap, test_images_dir, tiffile
             )
             print(command)
             os.system(command)
@@ -323,6 +575,7 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
         img_filenames = glob.glob(os.path.join(test_images_dir, '*.tif'))
         if patch_size is not None:  # sliding window inference, from mmsegmentation
             merge_tif_filenames = []
+            all_lines = []
             with torch.no_grad():
                 for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
                     file_prefix = img_filename.split(os.sep)[-1].replace('.tif', '')
@@ -410,7 +663,12 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                         Image.fromarray(final_img).save(os.path.join(results_dir, file_prefix + '.png'))
 
                         # save_tif_filename = os.path.join(save_path, file_prefix + args.test_image_postfix)
-                        save_numpy_array_to_tif(pred, img_filename, label_maps, save_tif_filename, args.min_blob_size)
+                        lines = save_numpy_array_to_tif(pred, img_filename, label_maps, save_tif_filename,
+                                                        args.min_blob_size,
+                                                        tiled_width=tiled_width,
+                                                        tiled_height=tiled_height,
+                                                        tiled_overlap=tiled_overlap)
+                        all_lines += lines
                         merge_tif_filenames.append(save_tif_filename)
                         # save_path1 = os.path.join(save_path, file_prefix)
                         # if not os.path.exists(save_path1):
@@ -444,32 +702,80 @@ def test_tif(tiffiles, net, device=None, patch_size=None, save_root=None, num_cl
                     print(command)
                     os.system(command)
 
-                    command = r'gdal_polygonize.py %s -b 1 -f "ESRI Shapefile" %s' % (
-                        os.path.join(save_path, '%s.tif' % label_name),
-                        os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
-                    )
-                    print(command)
-                    os.system(command)
+                    if label_name != 'line':
+                        command = r'gdal_polygonize.py %s -b 1 -f "ESRI Shapefile" %s' % (
+                            os.path.join(save_path, '%s.tif' % label_name),
+                            os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+                        )
+                        print(command)
+                        os.system(command)
+                    else:
+                        save_absfilepath = os.path.join(save_path, '%s.shp' % label_name)
+                        if len(all_lines) > 0:
+                            radians = []
+                            dists = []
+                            valid_lines = []
+                            for x1, y1, x2, y2 in all_lines:
+                                radian = np.arctan((y1 - y2) / (x2 - x1 + 1e-10))
+                                dist = math.sqrt((x1 - x2) ** 2 + (y1 - y2) ** 2)
+                                radians.append(radian)
+                                dists.append(dist)
 
-                    command = r'ogr2ogr -where "\"DN\"=255" -f "ESRI Shapefile" %s %s' % (
-                        os.path.join(save_path, '%s.shp' % label_name),
-                        os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
-                    )
-                    print(command)
-                    os.system(command)
+                                if dist > 50:
+                                    valid_lines.append([x1, y1, x2, y2])
 
-        if os.path.exists(results_dir):
-            shutil.rmtree(results_dir, ignore_errors=True)
-        if os.path.exists(tmp_dir):
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+                            # print('radians', radians)
+                            # print('dists', dists)
+                            radian_hist, radian_bin_edges = np.histogram(radians,
+                                                                         bins=np.arange(-np.pi / 2, np.pi / 2,
+                                                                                        5 * np.pi / 180))
+                            # print('radian_hist', radian_hist)
+                            # print('radian_bin_edges', radian_bin_edges)
+                            max_hist = np.argmax(radian_hist)
+                            max_radian = radian_bin_edges[max_hist]
+                            # print('max_hist', max_hist)
+                            # print('max_radian', max_radian)
+
+                            if len(valid_lines) > 0:
+                                all_preds = np.concatenate([np.array(valid_lines).reshape([-1, 4]),
+                                                            np.ones((len(valid_lines), 2), dtype=np.float32)], axis=1)
+                            else:
+                                all_preds = []
+
+                                # self.names = {1: 'Line'}
+                                # self.colors = {1: [255, 255, 255]}
+                            save_predictions_to_envi_xml_and_shp(preds=all_preds,
+                                                                 save_xml_filename=None,
+                                                                 gdal_proj_info=projection_sr,  # projection_esri,
+                                                                 gdal_trans_info=geotransform,
+                                                                 names={1: 'line'},
+                                                                 colors={1: [255, 255, 255]},
+                                                                 is_line=True,
+                                                                 spatialreference=projection_sr,
+                                                                 is_save_xml=False,
+                                                                 save_shp_filename=save_absfilepath)
+
+                    if label_name != 'line':
+                        command = r'ogr2ogr -where "\"DN\"=255" -f "ESRI Shapefile" %s %s' % (
+                            os.path.join(save_path, '%s.shp' % label_name),
+                            os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+                        )
+                        print(command)
+                        os.system(command)
+
+        if True:
+            if os.path.exists(results_dir):
+                shutil.rmtree(results_dir, ignore_errors=True)
+            if os.path.exists(tmp_dir):
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def merge_mc_seg_results(args=None):
     tiffiles = [
-        # 'G:\\gddata\\all\\2-WV03-在建杆塔.tif',
+        'G:\\gddata\\all\\2-WV03-在建杆塔.tif',
         'G:\\gddata\\all\\3-wv02-在建杆塔.tif',
         'G:\\gddata\\all\\110kv江桂线N41-N42（含杆塔、导线、绝缘子、树木）.tif',
-        'G:\\gddata\\all\\220kvqinshunxiann39-n42.tif',
+        # 'G:\\gddata\\all\\220kvqinshunxiann39-n42.tif',
         'G:\\gddata\\all\\220kvqinshunxiann53-n541.tif',
         'G:\\gddata\\all\\220kvqinshunxiann70-n71.tif',
         'G:\\gddata\\all\\po008535_gd33.tif',
@@ -513,6 +819,7 @@ def merge_mc_seg_results(args=None):
         if np.all(shp_exists):
             continue
 
+        print(tiffile)
         ds = gdal.Open(tiffile, gdal.GA_ReadOnly)
         print("Driver: {}/{}".format(ds.GetDriver().ShortName,
                                      ds.GetDriver().LongName))
@@ -659,13 +966,45 @@ def main():
             # 'G:\\gddata\\all\\候村250m_mosaic.tif',
         ]
         # tiffiles = glob.glob(os.path.join(args.test_tifs_dir, '*.tif'))
+        label_maps = {
+            1: 'landslide',
+            2: 'water',
+            3: 'tree',
+            4: 'building',
+        }
 
         save_dir = os.path.join(save_path, os.path.splitext(os.path.basename(args.pth_filename))[0], args.test_subset)
         test_tif(tiffiles, net, device,
                  patch_size=args.img_size,
                  save_root=save_dir,
                  num_classes=args.num_classes,
-                 args=args)
+                 args=args,
+                 label_maps=label_maps)
+        sys.exit(-1)
+    if args.action == 'do_test_tif_line_foreign':
+        # Load checkpoint
+        print('==> Loading checkpoint...')
+        checkpoint = torch.load(join(save_path, args.pth_filename))
+        net.load_state_dict(checkpoint['net'])
+
+        tiffiles = [
+            'E:\\generated_big_test_images\\line_foreign\\2-WV03-在建杆塔.tif',
+            'E:\\generated_big_test_images\\line_foreign\\2-WV03-在建杆塔_line_region.tif',
+        ]
+        tiffiles = glob.glob(os.path.join(args.test_tifs_dir, '*.tif'))
+        label_maps = {
+            # 1: 'bg',
+            2: 'line',
+            3: 'line_foreign',
+        }
+
+        save_dir = os.path.join(save_path, os.path.splitext(os.path.basename(args.pth_filename))[0], args.test_subset)
+        test_tif(tiffiles, net, device,
+                 patch_size=args.img_size,
+                 save_root=save_dir,
+                 num_classes=args.num_classes,
+                 args=args,
+                 label_maps=label_maps)
         sys.exit(-1)
 
     # torch.nn.init.kaiming_normal(net, mode='fan_out')      # Modify default initialization method
