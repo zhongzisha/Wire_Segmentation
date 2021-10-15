@@ -122,3 +122,30 @@ python train_mc_seg.py ^
 ) else (
 echo "no, what's that?"
 )
+
+
+if [%ACTION%]==[generate_new] (
+echo "yes, merge results on tif files"
+
+@REM using tif for testing
+python train_mc_seg.py ^
+--outf %OUTF% ^
+--data_root %DATA_ROOT% ^
+--batch_size %BS% ^
+--lr %LR% ^
+--N_patches 0 ^
+--network %NETWORK% ^
+--save %SAVE_DIR% ^
+--train_subset train ^
+--val_subset val ^
+--test_subset test_tif ^
+--num_classes 4 ^
+--img_size %IMG_SIZE% ^
+--action generate_new_labeling_from_merged_results ^
+--pth_filename epoch-%EPOCH%.pth ^
+--tiled_tifs_dir %TILED_TIFS_DIR% ^
+--test_tifs_dir G:/gddata/all
+
+) else (
+echo "no, what's that?"
+)

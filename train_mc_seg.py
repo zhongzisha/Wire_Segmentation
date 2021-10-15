@@ -888,6 +888,206 @@ def merge_mc_seg_results(args=None):
             os.system(command)
         # break
 
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def refine_result(result, reference_tif, label_name, save_path, tmp_dir):
+    H, W = result.shape[:2]
+    kernel = cv2.getStructuringElement(cv2.MORPH_ERODE, (3, 3))
+    result = cv2.morphologyEx(result, cv2.MORPH_ERODE, kernel)
+    # morph operators
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    result = cv2.morphologyEx(result, cv2.MORPH_OPEN, kernel)
+    result = cv2.morphologyEx(result, cv2.MORPH_CLOSE, kernel)
+
+    # remove small connected blobs
+    # find connected components
+    n_components, output, stats, centroids = cv2.connectedComponentsWithStats(
+        result, connectivity=8)
+    # remove background class
+    sizes = stats[1:, -1]
+    n_components = n_components - 1
+
+    sizes_inds = np.argsort(sizes)
+    ind = int(np.floor(0.98*len(sizes)))
+    blob_size = sizes[sizes_inds[ind]]
+
+    # remove blobs
+    mask_clean = np.zeros(output.shape, dtype=np.uint8)
+    # for every component in the image, keep it only if it's above min_blob_size
+    for i in range(0, n_components):
+        if sizes[i] >= blob_size:
+            mask_clean[output == i + 1] = 255
+
+    # current_pred[current_pred == 0] = no_data_value
+    print(np.min(mask_clean), np.max(mask_clean))
+
+
+    ds = gdal.Open(reference_tif, gdal.GA_ReadOnly)
+    print("Driver: {}/{}".format(ds.GetDriver().ShortName,
+                                 ds.GetDriver().LongName))
+    print("Size is {} x {} x {}".format(ds.RasterXSize,
+                                        ds.RasterYSize,
+                                        ds.RasterCount))
+    print("Projection is {}".format(ds.GetProjection()))
+    projection = ds.GetProjection()
+    projection_sr = osr.SpatialReference(wkt=projection)
+    projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
+    geotransform = ds.GetGeoTransform()
+    xOrigin = geotransform[0]
+    yOrigin = geotransform[3]
+    pixelWidth = geotransform[1]
+    pixelHeight = geotransform[5]
+    orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
+    if geotransform:
+        print("Origin = ({}, {})".format(geotransform[0], geotransform[3]))
+        print("Pixel Size = ({}, {})".format(geotransform[1], geotransform[5]))
+        print("IsNorth = ({}, {})".format(geotransform[2], geotransform[4]))
+    ds = None
+
+    save_tiffilename = os.path.join(tmp_dir, '%s_tmp.tif' % label_name)
+    driver = gdal.GetDriverByName("GTiff")
+    outdata = driver.Create(save_tiffilename, orig_width, orig_height, 1, gdal.GDT_Byte)
+    # options=['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
+    # outdata = driver.CreateCopy(save_path, ds, 0, ['COMPRESS=LZW', 'BIGTIFF=YES', 'INTERLEAVE=PIXEL'])
+    outdata.SetGeoTransform(geotransform)  # sets same geotransform as input
+    outdata.SetProjection(projection)  # sets same projection as input
+
+    band = outdata.GetRasterBand(1)
+    band.WriteArray(mask_clean, xoff=0, yoff=0)
+
+    # band.SetNoDataValue(no_data_value)
+    band.FlushCache()
+    del band
+    outdata.FlushCache()
+    del outdata
+    del driver
+
+    command = r'gdal_translate -of GTiff -co "TILED=YES" -co "COMPRESS=LZW" -co "BIGTIFF=YES" %s %s' % (
+        save_tiffilename,
+        os.path.join(save_path, '%s.tif' % label_name),
+    )
+    print(command)
+    os.system(command)
+
+    command = r'gdal_polygonize.py %s -b 1 -f "ESRI Shapefile" %s' % (
+        os.path.join(save_path, '%s.tif' % label_name),
+        os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+    )
+    print(command)
+    os.system(command)
+
+    command = r'ogr2ogr -where "\"DN\"=255" -f "ESRI Shapefile" %s %s' % (
+        os.path.join(save_path, '%s.shp' % label_name),
+        os.path.join(tmp_dir, '%s_tmp.shp' % label_name)
+    )
+    print(command)
+    os.system(command)
+
+
+def generate_new_labeling_from_merged_results(args):
+    tiffiles = [
+        # 'G:\\gddata\\all\\2-WV03-在建杆塔.tif',
+        'G:\\gddata\\all\\3-wv02-在建杆塔.tif',
+        'G:\\gddata\\all\\110kv江桂线N41-N42（含杆塔、导线、绝缘子、树木）.tif',
+        # 'G:\\gddata\\all\\220kvqinshunxiann39-n42.tif',
+        'G:\\gddata\\all\\220kvqinshunxiann53-n541.tif',
+        'G:\\gddata\\all\\220kvqinshunxiann70-n71.tif',
+        'G:\\gddata\\all\\po008535_gd33.tif',
+        'G:\\gddata\\all\\WV03-曲花甲线-20170510.tif',
+        'G:\\gddata\\all\\WV03-英连线-20170206.tif',
+        # 'G:\\gddata\\all\\候村250m_mosaic.tif',
+    ]
+    # tiffiles = glob.glob(os.path.join(args.test_tifs_dir, '*.tif'))
+    epochs = [20, 30, 40, 50]
+    log_roots = [
+        r'E:\Downloads\mc_seg\logs\U_Net_512_4_0.0001',
+        r'E:\Downloads\mc_seg\logs\SMP_UnetPlusPlus_512_8_0.001',
+    ]
+    palette = np.array([[0, 0, 0], [255, 0, 0], [0, 0, 255], [0, 255, 0], [255, 255, 255]])
+    # 'landslide', 'water', 'tree', 'building'
+    label_maps = {
+        1: 'landslide',
+        2: 'water',
+        3: 'tree',
+        4: 'building',
+    }
+
+    merged_root = r'E:\Downloads\mc_seg\logs\merged_results'
+    save_root = r'E:\Downloads\mc_seg\logs\merged_results_refined'
+
+    all_tiffiles = []
+    for tiffile in tiffiles:
+        all_tiffiles += tiffile.split(',')
+
+    for tiffile in all_tiffiles:
+        tiffile_prefix = tiffile.split(os.sep)[-1].replace('.tif', '')
+
+        merged_path = os.path.join(merged_root, tiffile_prefix)
+        save_path = os.path.join(save_root, tiffile_prefix)
+        if not os.path.exists(save_path):
+            os.makedirs(save_path)
+
+        tmp_dir = os.path.join(save_root, tiffile_prefix, 'tmp')
+        if not os.path.exists(tmp_dir):
+            os.makedirs(tmp_dir)
+
+        shp_exists = [os.path.exists(os.path.join(save_path, label_name + '.shp'))
+                      for label, label_name in label_maps.items()]
+        if np.all(shp_exists):
+            continue
+
+        print(tiffile)
+        ds = gdal.Open(tiffile, gdal.GA_ReadOnly)
+        print("Driver: {}/{}".format(ds.GetDriver().ShortName,
+                                     ds.GetDriver().LongName))
+        print("Size is {} x {} x {}".format(ds.RasterXSize,
+                                            ds.RasterYSize,
+                                            ds.RasterCount))
+        print("Projection is {}".format(ds.GetProjection()))
+        projection = ds.GetProjection()
+        projection_sr = osr.SpatialReference(wkt=projection)
+        projection_esri = projection_sr.ExportToWkt(["FORMAT=WKT1_ESRI"])
+        geotransform = ds.GetGeoTransform()
+        xOrigin = geotransform[0]
+        yOrigin = geotransform[3]
+        pixelWidth = geotransform[1]
+        pixelHeight = geotransform[5]
+        orig_height, orig_width = ds.RasterYSize, ds.RasterXSize
+        if geotransform:
+            print("Origin = ({}, {})".format(geotransform[0], geotransform[3]))
+            print("Pixel Size = ({}, {})".format(geotransform[1], geotransform[5]))
+            print("IsNorth = ({}, {})".format(geotransform[2], geotransform[4]))
+
+        # get all_zero_pixels
+        img = np.zeros((orig_height, orig_width), dtype=np.uint8)  # RGB format
+        ds = gdal.Open(tiffile, gdal.GA_ReadOnly)
+        for b in range(3):
+            band = ds.GetRasterBand(b + 1)
+            img |= band.ReadAsArray(0, 0, win_xsize=orig_width, win_ysize=orig_height)
+        y0s, x0s = np.where(img == 0)
+        del img
+        ds = None
+        print(len(y0s), len(x0s))
+
+        for b, (label, label_name) in enumerate(label_maps.items()):
+            print(label_name)
+            label_filename = os.path.join(merged_path, '%s.tif' % label_name)
+            merged_result = np.array((orig_height, orig_width), dtype=np.uint8)
+            ds = gdal.Open(label_filename, gdal.GA_ReadOnly)
+            for b in range(1):
+                band = ds.GetRasterBand(b + 1)
+                merged_result = band.ReadAsArray(0, 0, win_xsize=orig_width, win_ysize=orig_height)
+            ds = None
+            merged_result[y0s, x0s] = 0
+            print('refine result')
+            refine_result(merged_result, tiffile, label_name, save_path, tmp_dir)
+        # break
+
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
 
 def main():
     setpu_seed(2021)
@@ -895,6 +1095,9 @@ def main():
 
     if args.action == 'merge_results':
         merge_mc_seg_results(args)
+        sys.exit(-1)
+    if args.action == 'generate_new_labeling_from_merged_results':
+        generate_new_labeling_from_merged_results(args)
         sys.exit(-1)
 
     save_path = join(args.outf, args.save)
