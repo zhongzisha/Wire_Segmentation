@@ -1,16 +1,17 @@
 echo "training ..."
-chcp 65001
-set LR=0.0001
-set LR=0.001
-set BS=4
-set BS=8
-set IMG_SIZE=512
-set NETWORK=U_Net
-set NETWORK=SMP_UnetPlusPlus
-set DATA_ROOT=E:/Downloads/mc_seg/data_using_shp_multi_random200
-set OUTF=E:/Downloads/mc_seg/logs
-set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%
-set TILED_TIFS_DIR=G:/gddata/tiled_tifs
+@REM comment the following when using from_merged
+@REM chcp 65001
+@REM set LR=0.0001
+@REM set LR=0.001
+@REM set BS=4
+@REM set BS=8
+@REM set IMG_SIZE=512
+@REM set NETWORK=U_Net
+@REM set NETWORK=SMP_UnetPlusPlus
+@REM set DATA_ROOT=E:/Downloads/mc_seg/data_using_shp_multi_random200
+@REM set OUTF=E:/Downloads/mc_seg/logs
+@REM set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%
+@REM set TILED_TIFS_DIR=G:/gddata/tiled_tifs
 set ACTION=%1%
 set EPOCH=%2%
 
@@ -73,6 +74,43 @@ python train_mc_seg.py ^
 
 if [%ACTION%]==[do_test_tif] (
 echo "yes, do test on tif files"
+
+@REM using tif for testing
+python train_mc_seg.py ^
+--outf %OUTF% ^
+--data_root %DATA_ROOT% ^
+--batch_size %BS% ^
+--lr %LR% ^
+--N_patches 0 ^
+--network %NETWORK% ^
+--save %SAVE_DIR% ^
+--train_subset train ^
+--val_subset val ^
+--test_subset test_tif ^
+--num_classes 4 ^
+--img_size %IMG_SIZE% ^
+--action do_test_tif ^
+--pth_filename epoch-%EPOCH%.pth ^
+--tiled_tifs_dir %TILED_TIFS_DIR% ^
+--test_tifs_dir G:/gddata/all
+
+) else (
+echo "no, what's that?"
+)
+
+if [%ACTION%]==[do_test_tif_from_merged] (
+echo "yes, do test on tif files"
+set LR=0.0001
+@REM set LR=0.001
+set BS=4
+@REM set BS=8
+set IMG_SIZE=512
+set NETWORK=U_Net
+@REM set NETWORK=SMP_UnetPlusPlus
+set DATA_ROOT=E:/Downloads/mc_seg/data_using_shp_multi_random400_from_merged
+set OUTF=E:/Downloads/mc_seg/logs_from_merged
+set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%
+set TILED_TIFS_DIR=G:/gddata/tiled_tifs
 
 @REM using tif for testing
 python train_mc_seg.py ^

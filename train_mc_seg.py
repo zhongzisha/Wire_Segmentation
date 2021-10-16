@@ -61,7 +61,8 @@ def test(test_images_dir, test_gts_dir, net,
          num_classes=2, args=None):
     import glob
     img_filenames = glob.glob(os.path.join(test_images_dir, '*.jpg'))
-
+    print(test_images_dir)
+    print(img_filenames)
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     if 'SMP_' in args.network:
@@ -139,7 +140,7 @@ def test(test_images_dir, test_gts_dir, net,
                         pred_color
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img[:, :, ::-1])
-                    # cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
+                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
     else:
         with torch.no_grad():
             for batch_idx, img_filename in tqdm(enumerate(img_filenames), total=len(img_filenames)):
@@ -179,7 +180,7 @@ def test(test_images_dir, test_gts_dir, net,
                         pred_color
                     ], axis=1)
                     cv2.imwrite(os.path.join(save_path, file_prefix + '.png'), final_img[:, :, ::-1])
-                    # cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
+                    cv2.imwrite(os.path.join(save_path, file_prefix + '_binary.png'), pred)
 
     log = OrderedDict([('val_loss', val_loss.avg)])
     return log
@@ -1143,7 +1144,7 @@ def main():
         checkpoint = torch.load(join(save_path, args.pth_filename))
         net.load_state_dict(checkpoint['net'])
 
-        save_dir = os.path.join(save_path, args.pth_filename, args.test_subset)
+        save_dir = os.path.join(save_path, os.path.splitext(os.path.basename(args.pth_filename))[0], args.test_subset)
         test(args.test_images_dir, args.test_gts_dir, net, device,
              patch_size=args.img_size,
              save_path=save_dir,
@@ -1270,9 +1271,10 @@ def main():
         if lr_scheduler is not None:
             lr_scheduler.step()
 
+        if epoch == 1 or epoch % 10 == 0:
         # Save checkpoint of latest and best model.
-        state = {'net': net.state_dict(), 'optimizer': optimizer.state_dict(), 'epoch': epoch}
-        torch.save(state, join(save_path, 'epoch-%d.pth' % epoch))
+            state = {'net': net.state_dict(), 'optimizer': optimizer.state_dict(), 'epoch': epoch}
+            torch.save(state, join(save_path, 'epoch-%d.pth' % epoch))
         trigger += 1
         # if val_log['val_auc_roc'] > best['AUC_roc']:
         #     print('\033[0;33mSaving best model!\033[0m')
