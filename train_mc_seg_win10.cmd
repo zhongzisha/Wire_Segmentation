@@ -100,13 +100,13 @@ echo "no, what's that?"
 
 if [%ACTION%]==[do_test_tif_from_merged] (
 echo "yes, do test on tif files"
-set LR=0.0001
-@REM set LR=0.001
-set BS=4
-@REM set BS=8
+@REM set LR=0.0001
+set LR=0.001
+@REM set BS=4
+set BS=8
 set IMG_SIZE=512
-set NETWORK=U_Net
-@REM set NETWORK=SMP_UnetPlusPlus
+@REM set NETWORK=U_Net
+set NETWORK=SMP_UnetPlusPlus
 set DATA_ROOT=E:/Downloads/mc_seg/data_using_shp_multi_random400_from_merged
 set OUTF=E:/Downloads/mc_seg/logs_from_merged
 set SAVE_DIR=%NETWORK%_%IMG_SIZE%_%BS%_%LR%

@@ -532,22 +532,17 @@ class conv_block(nn.Module):
 
 
 class ConvProj(nn.Module):
-    def __init__(self, img_ch=3, embed_dim=96):
+    def __init__(self, in_chans=3, embed_dim=96):
         super(ConvProj, self).__init__()
-
         self.Maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.Conv1 = conv_block(ch_in=img_ch, ch_out=embed_dim//2)
+        self.Conv1 = conv_block(ch_in=in_chans, ch_out=embed_dim//2)
         self.Conv2 = conv_block(ch_in=embed_dim//2, ch_out=embed_dim)
 
     def forward(self, x):
-        # encoding path
         x1 = self.Conv1(x)    # B3(224x224) --> B * 48 * 224 * 224
-
         x2 = self.Maxpool(x1)  # B * 48 * 112 * 112
         x2 = self.Conv2(x2)    # B * 96 * 112 * 112
-
         x3 = self.Maxpool(x2)  # B * 96 * 56 * 56
-
         return x3
 
 
@@ -577,7 +572,7 @@ class PatchEmbed(nn.Module):
 
         # TODO zzs v2就是改了这里
         # self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.proj = ConvProj(img_ch=in_chans, embed_dim=embed_dim)
+        self.proj = ConvProj(in_chans=in_chans, embed_dim=embed_dim)
 
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
