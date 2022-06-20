@@ -1,8 +1,8 @@
 RUN_TYPE=do_test   # train, val, test_big
 GPU_ID=0      # 0 or 1
-NETWORK=Swin_Unet_V2     # U_Net or LadderNet
+NETWORK=Swin_Unet     # U_Net or LadderNet
 BS=24          # 4, 8, ...
-LR=0.1          # 0.001 or ...
+LR=0.05          # 0.001 or ...
 MODELTYPE=latest   # best or latest
 SWIN_BACBONE=tiny   # tiny,small,base
 IMG_SIZE=224    # 224
@@ -64,12 +64,12 @@ elif [ $RUN_TYPE == "do_test" ]; then
   --dataset_type ${DATASET_TYPE} \
   --train_subset train \
   --val_subset val \
-  --test_subset val \
-  --cfg ${CFG_FILE} \
+  --test_subset test \
+  --cfg swin_tiny_patch4_window7_224_lite.yaml \
   --num_classes 2 \
   --action do_test \
-  --test_images_dir ${LINE_REFINE_SEG_DATA_ROOT}/val/images \
-  --test_gts_dir ${LINE_REFINE_SEG_DATA_ROOT}/val/annotations \
+  --test_images_dir ${LINE_REFINE_SEG_DATA_ROOT}/test/images \
+  --test_gts_dir ${LINE_REFINE_SEG_DATA_ROOT}/test/annotations \
   --pth_filename epoch-50.pth
 
 fi
